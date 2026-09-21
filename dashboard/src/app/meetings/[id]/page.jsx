@@ -22,6 +22,7 @@ import {
 import { supabase } from '../../../lib/supabase';
 import StatusBadge from '../../../components/StatusBadge';
 import ProcessingProgress from '../../../components/ProcessingProgress';
+import MeetingProcessingView from '../../../components/MeetingProcessingView';
 
 export default function MeetingDetailPage() {
   const params = useParams();
@@ -152,6 +153,11 @@ export default function MeetingDetailPage() {
         </Link>
       </div>
     );
+  }
+
+  // If meeting is currently processing or recording, show rich live processing screen
+  if (meeting.status === 'processing' || meeting.status === 'recording' || meeting.status === 'joining') {
+    return <MeetingProcessingView meeting={meeting} />;
   }
 
   return (
