@@ -182,6 +182,18 @@ export default function InsightsPage() {
     return list.slice(0, 4);
   }, [moms]);
 
+  const cardStyle = {
+    backgroundColor: '#FFFFFF',
+    border: '1px solid #EDF2F7',
+    borderRadius: '14px',
+    padding: '20px 22px',
+    display: 'flex',
+    flexDirection: 'column',
+    height: '350px',
+    boxSizing: 'border-box',
+    overflow: 'hidden',
+  };
+
   return (
     <div>
       {/* 1. Interactive Top Bar with Search, Schedule, Notifications & Profile Menu */}
@@ -326,9 +338,9 @@ export default function InsightsPage() {
       </section>
 
       {/* 4. Insights 6-Box Grid (All boxes same size & perfectly aligned) */}
-      <section className="insights-grid">
+      <section className="insights-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '24px' }}>
         {/* Card 1: Activity & Hours Trend */}
-        <div className="insights-card" style={{ position: 'relative' }}>
+        <div className="insights-card" style={{ ...cardStyle, position: 'relative' }}>
           <div className="card-ref-header" style={{ alignItems: 'flex-start', gap: '8px', flexWrap: 'nowrap', marginBottom: '10px' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h3 className="card-ref-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Activity &amp; Hours Trend</h3>
@@ -445,7 +457,7 @@ export default function InsightsPage() {
         </div>
 
         {/* Card 2: Time Distribution */}
-        <div className="insights-card">
+        <div className="insights-card" style={cardStyle}>
           <div className="card-ref-header" style={{ marginBottom: '10px' }}>
             <div>
               <h3 className="card-ref-title">Time Distribution</h3>
@@ -522,7 +534,7 @@ export default function InsightsPage() {
         </div>
 
         {/* Card 3: Key Takeaways */}
-        <div className="insights-card">
+        <div className="insights-card" style={cardStyle}>
           <div className="card-ref-header" style={{ marginBottom: '10px' }}>
             <div>
               <h3 className="card-ref-title">Key Takeaways</h3>
@@ -556,7 +568,7 @@ export default function InsightsPage() {
         </div>
 
         {/* Card 4: Most Discussed Topics */}
-        <div className="insights-card">
+        <div className="insights-card" style={cardStyle}>
           <div className="card-ref-header" style={{ marginBottom: '12px' }}>
             <div>
               <h3 className="card-ref-title">Most Discussed Topics</h3>
@@ -594,7 +606,7 @@ export default function InsightsPage() {
         </div>
 
         {/* Card 5: Meeting Sentiment */}
-        <div className="insights-card">
+        <div className="insights-card" style={cardStyle}>
           <div className="card-ref-header" style={{ marginBottom: '10px' }}>
             <div>
               <h3 className="card-ref-title">Meeting Sentiment</h3>
@@ -670,7 +682,7 @@ export default function InsightsPage() {
         </div>
 
         {/* Card 6: Top Collaborators */}
-        <div className="insights-card">
+        <div className="insights-card" style={cardStyle}>
           <div className="card-ref-header" style={{ marginBottom: '10px' }}>
             <div>
               <h3 className="card-ref-title">Top Collaborators</h3>
