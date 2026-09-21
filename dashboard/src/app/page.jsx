@@ -209,11 +209,11 @@ export default function LandingPage() {
       {/* 1. Header / Navbar */}
       <header className="landing-header">
         <div className="landing-header-inner">
-          <Link href="/" className="landing-brand">
-            <div style={{ position: 'relative', width: '32px', height: '32px' }}>
+          <Link href="/" className="landing-brand" style={{ gap: '12px' }}>
+            <div style={{ position: 'relative', width: '44px', height: '44px' }}>
               <Image src="/logo.png" alt="recap logo" fill style={{ objectFit: 'contain' }} priority />
             </div>
-            <span>recap</span>
+            <span style={{ fontSize: '24px', fontWeight: 800, letterSpacing: '-0.03em' }}>recap</span>
           </Link>
 
           {/* Nav Tabs */}
