@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import Image from 'next/image';
 import Navigation from './Navigation';
 import { supabase } from '../lib/supabase';
 import { Loader2 } from 'lucide-react';
@@ -73,22 +74,8 @@ export default function AppShell({ children }) {
           fontFamily: 'Plus Jakarta Sans, sans-serif',
         }}
       >
-        <div
-          style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '10px',
-            backgroundColor: '#0066FF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#FFFFFF',
-            fontWeight: 800,
-            fontSize: '18px',
-            boxShadow: '0 4px 12px rgba(0, 102, 255, 0.25)',
-          }}
-        >
-          R
+        <div style={{ position: 'relative', width: '44px', height: '44px' }}>
+          <Image src="/logo.png" alt="recap logo" fill style={{ objectFit: 'contain' }} priority />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#64748B', fontSize: '13px' }}>
           <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Mail,
@@ -13,7 +14,6 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
-  Sparkles,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
@@ -24,9 +24,9 @@ function LoginForm() {
   const redirectTo = searchParams.get('redirectTo') || '/dashboard';
 
   const [mode, setMode] = useState(initialMode);
-  const [email, setEmail] = useState('Harsh@sentio.in');
-  const [password, setPassword] = useState('Sentio@123');
-  const [name, setName] = useState('Harsh Vardhan Tripathi');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -114,34 +114,20 @@ function LoginForm() {
           style={{
             display: 'inline-flex',
             alignItems: 'center',
-            gap: '10px',
+            gap: '12px',
             textDecoration: 'none',
             color: '#0F172A',
             marginBottom: '8px',
           }}
         >
-          <div
-            style={{
-              width: '38px',
-              height: '38px',
-              borderRadius: '10px',
-              backgroundColor: '#0066FF',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#FFFFFF',
-              fontWeight: 800,
-              fontSize: '18px',
-              boxShadow: '0 4px 12px rgba(0, 102, 255, 0.25)',
-            }}
-          >
-            R
+          <div style={{ position: 'relative', width: '46px', height: '46px' }}>
+            <Image src="/logo.png" alt="recap logo" fill style={{ objectFit: 'contain' }} priority />
           </div>
           <span
             style={{
-              fontSize: '24px',
+              fontSize: '26px',
               fontWeight: 800,
-              letterSpacing: '-0.03em',
+              letterSpacing: '-0.035em',
             }}
           >
             recap
@@ -433,27 +419,6 @@ function LoginForm() {
               )}
             </button>
           </form>
-
-          {/* Quick Demo Credentials Helper */}
-          <div
-            style={{
-              marginTop: '20px',
-              padding: '12px 14px',
-              backgroundColor: '#EFF6FF',
-              borderRadius: '8px',
-              border: '1px solid #DBEAFE',
-              fontSize: '11.5px',
-              color: '#1E40AF',
-              lineHeight: 1.5,
-            }}
-          >
-            <div style={{ fontWeight: 700, marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <Sparkles size={12} />
-              <span>Owner Account Credentials:</span>
-            </div>
-            <div>Email: <strong style={{ color: '#0F172A' }}>Harsh@sentio.in</strong></div>
-            <div>Password: <strong style={{ color: '#0F172A' }}>Sentio@123</strong></div>
-          </div>
         </div>
       </div>
 
