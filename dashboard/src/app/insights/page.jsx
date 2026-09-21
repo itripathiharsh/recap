@@ -325,14 +325,14 @@ export default function InsightsPage() {
         </div>
       </section>
 
-      {/* 4. Middle Row: Productivity Trend, Time Distribution, Key Takeaways */}
-      <section className="insights-middle-grid">
-        {/* Col 1: Productivity Trend (Combo Chart) */}
-        <div className="card-ref" style={{ position: 'relative' }}>
-          <div className="card-ref-header" style={{ alignItems: 'flex-start', gap: '8px', flexWrap: 'nowrap' }}>
+      {/* 4. Insights 6-Box Grid (All boxes same size & perfectly aligned) */}
+      <section className="insights-grid">
+        {/* Card 1: Activity & Hours Trend */}
+        <div className="insights-card" style={{ position: 'relative' }}>
+          <div className="card-ref-header" style={{ alignItems: 'flex-start', gap: '8px', flexWrap: 'nowrap', marginBottom: '10px' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h3 className="card-ref-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Activity &amp; Hours Trend</h3>
-              <p className="card-ref-subtitle" style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>Weekly meeting count and recorded audio hours.</p>
+              <p className="card-ref-subtitle" style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>Weekly meeting count &amp; hours.</p>
             </div>
             <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>
               Last 4 weeks
@@ -340,58 +340,52 @@ export default function InsightsPage() {
           </div>
 
           {/* Legend & Hover Info */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11.5px', color: '#64748B', marginBottom: '14px', flexWrap: 'nowrap', minHeight: '22px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', whiteSpace: 'nowrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: '#64748B', marginBottom: '8px', flexWrap: 'nowrap', minHeight: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', whiteSpace: 'nowrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                 <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#60A5FA', flexShrink: 0 }} />
                 <span>Meetings</span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                 <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#8B5CF6', flexShrink: 0 }} />
-                <span>Hours Recorded</span>
+                <span>Hours</span>
               </div>
             </div>
 
-            {/* Hover Tooltip (displayed neatly inline) */}
             {hoveredTrendIdx !== null && trendData[hoveredTrendIdx] && (
               <div
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '8px',
+                  gap: '6px',
                   backgroundColor: '#EFF6FF',
                   border: '1px solid #DBEAFE',
-                  borderRadius: '6px',
-                  padding: '2px 8px',
-                  fontSize: '11px',
+                  borderRadius: '5px',
+                  padding: '1px 6px',
+                  fontSize: '10.5px',
                   whiteSpace: 'nowrap',
                 }}
               >
-                <span style={{ fontWeight: 600, color: '#1E40AF' }}>
-                  {trendData[hoveredTrendIdx].date}:
-                </span>
+                <span style={{ fontWeight: 600, color: '#1E40AF' }}>{trendData[hoveredTrendIdx].date}:</span>
                 <span style={{ color: '#0066FF', fontWeight: 600 }}>{trendData[hoveredTrendIdx].meetings} mtgs</span>
-                <span style={{ color: '#8B5CF6', fontWeight: 600 }}>{trendData[hoveredTrendIdx].hoursFormatted} hrs</span>
+                <span style={{ color: '#8B5CF6', fontWeight: 600 }}>{trendData[hoveredTrendIdx].hoursFormatted}h</span>
               </div>
             )}
           </div>
 
           {/* SVG Combo Chart */}
-          <div style={{ height: '170px', position: 'relative' }} onMouseLeave={() => setHoveredTrendIdx(null)}>
-            <svg viewBox="0 0 400 170" style={{ width: '100%', height: '100%' }}>
-              {/* Y-axis guide lines */}
+          <div style={{ flex: 1, minHeight: 0, position: 'relative' }} onMouseLeave={() => setHoveredTrendIdx(null)}>
+            <svg viewBox="0 0 400 170" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
               <line x1="30" y1="20" x2="380" y2="20" stroke="#F1F5F9" strokeWidth="1" />
               <line x1="30" y1="60" x2="380" y2="60" stroke="#F1F5F9" strokeWidth="1" />
               <line x1="30" y1="100" x2="380" y2="100" stroke="#F1F5F9" strokeWidth="1" />
               <line x1="30" y1="140" x2="380" y2="140" stroke="#E2E8F0" strokeWidth="1" />
 
-              {/* Y-axis labels */}
               <text x="18" y="24" fontSize="10" fill="#94A3B8">4</text>
               <text x="18" y="64" fontSize="10" fill="#94A3B8">3</text>
               <text x="18" y="104" fontSize="10" fill="#94A3B8">2</text>
               <text x="18" y="144" fontSize="10" fill="#94A3B8">0</text>
 
-              {/* Vertical Bars */}
               {trendData.map((d, i) => {
                 const x = 70 + i * 85;
                 const h = Math.min((d.meetings / 4) * 120, 120);
@@ -415,7 +409,6 @@ export default function InsightsPage() {
                 );
               })}
 
-              {/* Trend Line for Hours */}
               {trendData.length > 1 && (
                 <path
                   d={trendData.reduce((acc, d, i) => {
@@ -430,7 +423,6 @@ export default function InsightsPage() {
                   strokeLinejoin="round"
                 />
               )}
-              {/* Trend Line Points */}
               {trendData.map((d, i) => {
                 const x = 70 + i * 85;
                 const y = 140 - Math.min((d.hours / 4) * 120, 120);
@@ -452,21 +444,21 @@ export default function InsightsPage() {
           </div>
         </div>
 
-        {/* Col 2: Time Distribution (Donut Chart) */}
-        <div className="card-ref">
-          <div className="card-ref-header">
+        {/* Card 2: Time Distribution */}
+        <div className="insights-card">
+          <div className="card-ref-header" style={{ marginBottom: '10px' }}>
             <div>
               <h3 className="card-ref-title">Time Distribution</h3>
               <p className="card-ref-subtitle">Where your meeting time goes.</p>
             </div>
-            <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
+            <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
               All meetings
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: 1, justifyContent: 'center' }}>
             {/* Donut Chart with Center Hours */}
-            <div style={{ position: 'relative', width: '130px', height: '130px', flexShrink: 0 }}>
+            <div style={{ position: 'relative', width: '125px', height: '125px', flexShrink: 0 }}>
               <svg viewBox="0 0 36 36" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
                 {topics.length === 0 ? (
                   <circle cx="18" cy="18" r="14" fill="none" stroke="#E2E8F0" strokeWidth="5.5" />
@@ -494,7 +486,6 @@ export default function InsightsPage() {
                 )}
               </svg>
 
-              {/* Center Text */}
               <div
                 style={{
                   position: 'absolute',
@@ -512,11 +503,11 @@ export default function InsightsPage() {
             </div>
 
             {/* Legend with Percentages */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0, fontSize: '11px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, minWidth: 0, fontSize: '11px' }}>
               {topics.length === 0 ? (
                 <div style={{ color: '#94A3B8', fontSize: '12px' }}>No meeting topics yet</div>
               ) : (
-                topics.slice(0, 6).map((t) => (
+                topics.slice(0, 5).map((t) => (
                   <div key={t.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
                       <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: t.color, flexShrink: 0 }} />
@@ -530,73 +521,70 @@ export default function InsightsPage() {
           </div>
         </div>
 
-        {/* Col 3: Key Takeaways */}
-        <div className="card-ref">
-          <div className="card-ref-header">
+        {/* Card 3: Key Takeaways */}
+        <div className="insights-card">
+          <div className="card-ref-header" style={{ marginBottom: '10px' }}>
             <div>
               <h3 className="card-ref-title">Key Takeaways</h3>
               <p className="card-ref-subtitle">Top decisions from your meeting MOMs.</p>
             </div>
           </div>
 
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, overflowY: 'auto', paddingRight: '2px' }}>
             {realTakeaways.map((item, idx) => {
               const Icon = item.icon;
               return (
                 <div key={idx} className="takeaway-card-ref">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                     <div className="takeaway-icon-box" style={{ backgroundColor: item.bg, color: item.color }}>
-                      <Icon size={16} />
+                      <Icon size={14} />
                     </div>
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {item.title}
                       </div>
-                      <div style={{ fontSize: '11px', color: '#64748B', marginTop: '1px' }}>
+                      <div style={{ fontSize: '10.5px', color: '#64748B', marginTop: '1px' }}>
                         {item.sub}
                       </div>
                     </div>
                   </div>
-                  <ChevronRight size={14} color="#94A3B8" />
+                  <ChevronRight size={13} color="#94A3B8" style={{ flexShrink: 0 }} />
                 </div>
               );
             })}
           </div>
         </div>
-      </section>
 
-      {/* 5. Bottom Row: Most Discussed Topics, Meeting Sentiment, Top Collaborators */}
-      <section className="insights-bottom-grid">
-        {/* Col 1: Most Discussed Topics */}
-        <div className="card-ref">
-          <div className="card-ref-header">
+        {/* Card 4: Most Discussed Topics */}
+        <div className="insights-card">
+          <div className="card-ref-header" style={{ marginBottom: '12px' }}>
             <div>
               <h3 className="card-ref-title">Most Discussed Topics</h3>
               <p className="card-ref-subtitle">Distribution of meeting subjects.</p>
             </div>
-            <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
+            <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
               All time
             </span>
           </div>
 
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '12px', flex: 1 }}>
             {topics.length === 0 ? (
-              <div style={{ color: '#94A3B8', fontSize: '12.5px', padding: '16px 0' }}>No topics recorded yet</div>
+              <div style={{ color: '#94A3B8', fontSize: '12.5px', padding: '16px 0', textAlign: 'center' }}>No topics recorded yet</div>
             ) : (
               topics.map((t) => (
-                <div key={t.name} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '130px', flexShrink: 0 }}>
+                <div key={t.name} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '120px', flexShrink: 0 }}>
                     <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: t.color }} />
                     <span style={{ fontSize: '12px', color: '#0F172A', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {t.name}
                     </span>
                   </div>
 
-                  <div style={{ flex: 1, height: '8px', backgroundColor: '#F1F5F9', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ flex: 1, height: '7px', backgroundColor: '#F1F5F9', borderRadius: '4px', overflow: 'hidden' }}>
                     <div style={{ width: `${(t.count / Math.max(totalMeetingsCount, 1)) * 100}%`, height: '100%', backgroundColor: t.color, borderRadius: '4px' }} />
                   </div>
 
-                  <span className="tabular-nums" style={{ fontSize: '11.5px', fontWeight: 600, color: '#64748B', width: '22px', textAlign: 'right' }}>
+                  <span className="tabular-nums" style={{ fontSize: '11.5px', fontWeight: 600, color: '#64748B', width: '20px', textAlign: 'right' }}>
                     {t.count}
                   </span>
                 </div>
@@ -605,108 +593,110 @@ export default function InsightsPage() {
           </div>
         </div>
 
-        {/* Col 2: Meeting Sentiment */}
-        <div className="card-ref">
-          <div className="card-ref-header">
+        {/* Card 5: Meeting Sentiment */}
+        <div className="insights-card">
+          <div className="card-ref-header" style={{ marginBottom: '10px' }}>
             <div>
               <h3 className="card-ref-title">Meeting Sentiment</h3>
               <p className="card-ref-subtitle">Overall sentiment from your conversations.</p>
             </div>
-            <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
+            <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
               Feature Status
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', margin: '14px 0 20px' }}>
-            {/* Circular Gauge */}
-            <div style={{ position: 'relative', width: '110px', height: '110px' }}>
-              <svg viewBox="0 0 36 36" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#E2E8F0" strokeWidth="4" />
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#94A3B8" strokeWidth="4" strokeDasharray="0 100" strokeLinecap="round" />
-              </svg>
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '50%',
-                  left: '50%',
-                  transform: 'translate(-50%, -50%)',
-                  textAlign: 'center',
-                }}
-              >
-                <div style={{ fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: '18px', fontWeight: 800, color: '#94A3B8', lineHeight: 1 }}>
-                  --%
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', margin: '6px 0 10px' }}>
+              {/* Circular Gauge */}
+              <div style={{ position: 'relative', width: '95px', height: '95px' }}>
+                <svg viewBox="0 0 36 36" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
+                  <circle cx="18" cy="18" r="14" fill="none" stroke="#E2E8F0" strokeWidth="4" />
+                  <circle cx="18" cy="18" r="14" fill="none" stroke="#94A3B8" strokeWidth="4" strokeDasharray="0 100" strokeLinecap="round" />
+                </svg>
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    textAlign: 'center',
+                  }}
+                >
+                  <div style={{ fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: '17px', fontWeight: 800, color: '#94A3B8', lineHeight: 1 }}>
+                    --%
+                  </div>
+                  <div style={{ fontSize: '9.5px', color: '#94A3B8', fontWeight: 600, marginTop: '2px' }}>Inactive</div>
                 </div>
-                <div style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 600, marginTop: '2px' }}>Inactive</div>
+              </div>
+
+              {/* Breakdown */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '11.5px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#CBD5E1' }} />
+                  <span style={{ color: '#64748B', width: '55px' }}>Positive</span>
+                  <span className="tabular-nums" style={{ fontWeight: 600, color: '#94A3B8' }}>--%</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#CBD5E1' }} />
+                  <span style={{ color: '#64748B', width: '55px' }}>Neutral</span>
+                  <span className="tabular-nums" style={{ fontWeight: 600, color: '#94A3B8' }}>--%</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#CBD5E1' }} />
+                  <span style={{ color: '#64748B', width: '55px' }}>Negative</span>
+                  <span className="tabular-nums" style={{ fontWeight: 600, color: '#94A3B8' }}>--%</span>
+                </div>
               </div>
             </div>
 
-            {/* Breakdown */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#CBD5E1' }} />
-                <span style={{ color: '#64748B', width: '60px' }}>Positive</span>
-                <span className="tabular-nums" style={{ fontWeight: 600, color: '#94A3B8' }}>--%</span>
+            {/* Sentiment Badge */}
+            <div
+              style={{
+                backgroundColor: '#F8FAFC',
+                border: '1px solid #E2E8F0',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              <Lightbulb size={16} color="#64748B" flexShrink={0} />
+              <div style={{ fontSize: '11px', color: '#475569', lineHeight: 1.35 }}>
+                <strong>Sentiment model planned for recap v2.</strong> Currently, no sentiment scores are stored in your database.
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#CBD5E1' }} />
-                <span style={{ color: '#64748B', width: '60px' }}>Neutral</span>
-                <span className="tabular-nums" style={{ fontWeight: 600, color: '#94A3B8' }}>--%</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#CBD5E1' }} />
-                <span style={{ color: '#64748B', width: '60px' }}>Negative</span>
-                <span className="tabular-nums" style={{ fontWeight: 600, color: '#94A3B8' }}>--%</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Sentiment Badge */}
-          <div
-            style={{
-              backgroundColor: '#F8FAFC',
-              border: '1px solid #E2E8F0',
-              borderRadius: '10px',
-              padding: '10px 14px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-            }}
-          >
-            <Lightbulb size={18} color="#64748B" flexShrink={0} />
-            <div style={{ fontSize: '11.5px', color: '#475569', lineHeight: 1.4 }}>
-              <strong>Sentiment model planned for recap v2.</strong> Currently, no sentiment scores are stored in your database.
             </div>
           </div>
         </div>
 
-        {/* Col 3: Top Collaborators */}
-        <div className="card-ref">
-          <div className="card-ref-header">
+        {/* Card 6: Top Collaborators */}
+        <div className="insights-card">
+          <div className="card-ref-header" style={{ marginBottom: '10px' }}>
             <div>
               <h3 className="card-ref-title">Top Collaborators</h3>
               <p className="card-ref-subtitle">People you meet with most.</p>
             </div>
-            <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
+            <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
               Identified Speakers
             </span>
           </div>
 
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '8px', flex: 1 }}>
             {collaborators.length === 0 ? (
-              <div style={{ color: '#94A3B8', fontSize: '12.5px', padding: '16px 0' }}>No speaker turns identified yet</div>
+              <div style={{ color: '#94A3B8', fontSize: '12.5px', padding: '16px 0', textAlign: 'center' }}>No speaker turns identified yet</div>
             ) : (
-              collaborators.map((c) => (
-                <div key={c.name} className="collaborator-item">
-                  <div className="collaborator-left">
-                    <div className="collaborator-avatar">
+              collaborators.slice(0, 4).map((c) => (
+                <div key={c.name} className="collaborator-item" style={{ padding: '8px 0' }}>
+                  <div className="collaborator-left" style={{ minWidth: '110px' }}>
+                    <div className="collaborator-avatar" style={{ width: '28px', height: '28px', fontSize: '11px' }}>
                       {c.name[0].toUpperCase()}
                     </div>
-                    <div className="collaborator-name">{c.name}</div>
+                    <div className="collaborator-name" style={{ fontSize: '12px' }}>{c.name}</div>
                   </div>
 
-                  <div className="collaborator-count tabular-nums">{c.count} turns</div>
+                  <div className="collaborator-count tabular-nums" style={{ fontSize: '11px' }}>{c.count} turns</div>
 
-                  <div className="collaborator-bar-bg">
+                  <div className="collaborator-bar-bg" style={{ width: '70px', height: '6px' }}>
                     <div className="collaborator-bar-fill" style={{ width: `${c.pct}%`, backgroundColor: c.color }} />
                   </div>
                 </div>
