@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import StatusBadge from '../../../components/StatusBadge';
+import ProcessingProgress from '../../../components/ProcessingProgress';
 
 export default function MeetingDetailPage() {
   const params = useParams();
@@ -214,6 +215,9 @@ export default function MeetingDetailPage() {
         </div>
       </div>
 
+      {/* Processing Progress & Time-Remaining Bar (for active/processing meetings) */}
+      <ProcessingProgress meeting={meeting} />
+
       {/* Main Editorial Workspace Area */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
         {/* Summary */}
@@ -302,14 +306,45 @@ export default function MeetingDetailPage() {
 
         {/* Transcript Document View */}
         <section style={{ borderTop: '1px solid var(--border)', paddingTop: '20px' }}>
-          <h2 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '14px' }}>
-            Transcript
-          </h2>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+            <h2 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600, color: 'var(--text-secondary)' }}>
+              Transcript &amp; Speaker Attribution
+            </h2>
+
+            <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+              {speakerTurns.length > 0
+                ? 'Voice-diarized with speaker alignment'
+                : meeting?.status === 'processing'
+                ? 'Diarization in progress...'
+                : 'Raw transcript'}
+            </div>
+          </div>
+
+          {/* Speaker Attribution Tip Banner */}
+          <div
+            style={{
+              backgroundColor: '#F8FAFC',
+              border: '1px solid #EDF2F7',
+              borderRadius: '8px',
+              padding: '10px 14px',
+              fontSize: '12px',
+              color: '#475569',
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+            }}
+          >
+            <span>
+              💡 <strong>Speaker Attribution:</strong> Voices are separated via acoustic diarization (pyannote) and resolved to real names using dialogue context. Click the <Edit2 size={11} style={{ display: 'inline', margin: '0 2px' }} /> icon to rename any speaker.
+            </span>
+          </div>
 
           {speakerTurns.length > 0 && speakerTurns.some(t => t.text && t.text.trim()) ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {speakerTurns.filter(t => t.text && t.text.trim()).map((turn, i) => (
-                <div key={turn.id || i} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <div key={turn.id || i} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     {editingSpeaker === turn.speaker ? (
                       <form
@@ -369,9 +404,9 @@ export default function MeetingDetailPage() {
                       <>
                         <span
                           style={{
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            color: turn.speaker?.toLowerCase().includes('harsh') ? 'var(--brand-blue)' : 'var(--text-primary)',
+                            fontSize: '12.5px',
+                            fontWeight: 700,
+                            color: turn.speaker?.toLowerCase().includes('harsh') ? '#0066FF' : 'var(--text-primary)',
                           }}
                         >
                           {turn.speaker}
@@ -381,11 +416,11 @@ export default function MeetingDetailPage() {
                           <span
                             style={{
                               fontSize: '10px',
-                              background: 'var(--brand-blue-subtle)',
-                              color: 'var(--brand-blue)',
+                              background: '#EFF6FF',
+                              color: '#0066FF',
                               padding: '1px 5px',
                               borderRadius: '3px',
-                              fontWeight: 500,
+                              fontWeight: 600,
                             }}
                           >
                             You
@@ -418,20 +453,27 @@ export default function MeetingDetailPage() {
                       {turn.start_time?.toFixed(1)}s &ndash; {turn.end_time?.toFixed(1)}s
                     </span>
                   </div>
-                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                  <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
                     {turn.text}
                   </p>
                 </div>
               ))}
             </div>
           ) : transcript?.transcript_json?.segments && transcript.transcript_json.segments.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               {transcript.transcript_json.segments.map((seg, i) => (
-                <div key={i} style={{ fontSize: '13px', lineHeight: 1.6 }}>
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginRight: '8px' }} className="tabular-nums">
-                    [{seg.start?.toFixed(1)}s &ndash; {seg.end?.toFixed(1)}s]
-                  </span>
-                  <span style={{ color: 'var(--text-secondary)' }}>{seg.text}</span>
+                <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Speaker {i % 2 === 0 ? '1' : '2'}
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }} className="tabular-nums">
+                      {seg.start?.toFixed(1)}s &ndash; {seg.end?.toFixed(1)}s
+                    </span>
+                  </div>
+                  <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
+                    {seg.text}
+                  </p>
                 </div>
               ))}
             </div>

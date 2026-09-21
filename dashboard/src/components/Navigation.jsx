@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
@@ -75,14 +76,11 @@ export default function Navigation({ session }) {
     <aside className="sidebar-ref">
       {/* Brand Header */}
       <div className="sidebar-brand">
-        <Link href="/" className="sidebar-brand-link">
-          <div className="sidebar-logo-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="50 15" />
-              <circle cx="12" cy="12" r="4.5" fill="#0066FF" />
-            </svg>
+        <Link href="/" className="sidebar-brand-link" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ position: 'relative', width: '32px', height: '32px', flexShrink: 0 }}>
+            <Image src="/logo.png" alt="recap logo" fill style={{ objectFit: 'contain' }} priority />
           </div>
-          <span className="sidebar-brand-name">recap</span>
+          <span className="sidebar-brand-name" style={{ fontSize: '20px', fontWeight: 800, letterSpacing: '-0.03em' }}>recap</span>
         </Link>
       </div>
 

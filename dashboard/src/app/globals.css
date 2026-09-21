@@ -2566,7 +2566,7 @@ kbd {
    ========================================================================== */
 .insights-middle-grid {
   display: grid;
-  grid-template-columns: 1.35fr 1.05fr 0.85fr;
+  grid-template-columns: 1.45fr 1.05fr 0.95fr;
   gap: 20px;
   margin-bottom: 24px;
 }
@@ -2578,7 +2578,7 @@ kbd {
   margin-bottom: 24px;
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 1300px) {
   .insights-middle-grid,
   .insights-bottom-grid {
     grid-template-columns: 1fr;

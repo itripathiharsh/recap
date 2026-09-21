@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import AddMeetingModal from '../../components/AddMeetingModal';
+import TopHeader from '../../components/TopHeader';
 
 export default function CalendarPage() {
   const [meetings, setMeetings] = useState([]);
@@ -137,39 +138,8 @@ export default function CalendarPage() {
 
   return (
     <div>
-      {/* 1. Top Bar */}
-      <header className="dashboard-topbar">
-        <div className="dashboard-search-wrap">
-          <Search size={16} color="#94A3B8" aria-hidden="true" />
-          <input
-            type="text"
-            className="dashboard-search-input"
-            placeholder="Search meetings, transcripts, people, topics..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-
-        <div className="dashboard-topbar-actions">
-          <button
-            type="button"
-            className="btn-schedule-meeting"
-            onClick={() => setIsModalOpen(true)}
-          >
-            <Plus size={15} strokeWidth={2.5} aria-hidden="true" />
-            <span>Schedule Meeting</span>
-          </button>
-
-          <button type="button" className="topbar-icon-btn" aria-label="Notifications">
-            <Bell size={18} strokeWidth={1.8} />
-            <span className="topbar-badge-dot" />
-          </button>
-
-          <div className="topbar-avatar-btn" title="Harsh Vardhan">
-            <span>H</span>
-          </div>
-        </div>
-      </header>
+      {/* 1. Interactive Top Bar with Search, Schedule, Notifications & Profile Menu */}
+      <TopHeader searchQuery={search} onSearchChange={setSearch} placeholder="Search meetings, transcripts, people, topics..." />
 
       {/* 2. Hero Header with Floating Calendar Artwork & Doodle */}
       <section className="dashboard-hero" style={{ padding: '28px 36px 24px', marginBottom: '20px' }}>

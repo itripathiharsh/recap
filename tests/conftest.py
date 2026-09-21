@@ -7,10 +7,18 @@ and browser binaries to reside exclusively on D:.
 import os
 from pathlib import Path
 import tempfile
+import sys
+import tempfile
 import pytest
 
-TEST_TEMP_DIR = Path("D:/meet recorder/.temp/pytest").resolve()
-DEV_TEMP_DIR = Path("D:/dev/Temp").resolve()
+if sys.platform == "win32":
+    TEST_TEMP_DIR = Path("D:/meet recorder/.temp/pytest").resolve()
+    DEV_TEMP_DIR = Path("D:/meet recorder/.temp").resolve()
+    CACHE_BASE = Path("D:/meet recorder/.cache")
+else:
+    TEST_TEMP_DIR = Path("/mnt/d/meet recorder/.temp/pytest").resolve()
+    DEV_TEMP_DIR = Path("/mnt/d/meet recorder/.temp").resolve()
+    CACHE_BASE = Path("/mnt/d/meet recorder/.cache")
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -24,8 +32,9 @@ def pytest_configure(config: pytest.Config) -> None:
     tempfile.tempdir = str(TEST_TEMP_DIR)
 
     # Force model and browser caches on D:
-    os.environ.setdefault("HF_HOME", "D:/dev/Cache/huggingface")
-    os.environ.setdefault("HF_HUB_CACHE", "D:/dev/Cache/huggingface/hub")
-    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", "D:/dev/Cache/huggingface/hub")
-    os.environ.setdefault("TORCH_HOME", "D:/dev/Cache/torch")
-    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "D:/dev/ms-playwright")
+    os.environ.setdefault("HF_HOME", str(CACHE_BASE / "huggingface"))
+    os.environ.setdefault("HF_HUB_CACHE", str(CACHE_BASE / "huggingface/hub"))
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(CACHE_BASE / "huggingface/hub"))
+    os.environ.setdefault("TORCH_HOME", str(CACHE_BASE / "torch"))
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(DEV_TEMP_DIR / "ms-playwright"))
+

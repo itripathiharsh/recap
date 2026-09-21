@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import AddMeetingModal from '../../components/AddMeetingModal';
+import TopHeader from '../../components/TopHeader';
 
 export default function InsightsPage() {
   const [meetings, setMeetings] = useState([]);
@@ -26,7 +27,7 @@ export default function InsightsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [hoveredTrendIdx, setHoveredTrendIdx] = useState(3); // Default hover on Sep 15
+  const [hoveredTrendIdx, setHoveredTrendIdx] = useState(null);
 
   useEffect(() => {
     async function loadData() {
@@ -183,39 +184,8 @@ export default function InsightsPage() {
 
   return (
     <div>
-      {/* 1. Top Bar */}
-      <header className="dashboard-topbar">
-        <div className="dashboard-search-wrap">
-          <Search size={16} color="#94A3B8" aria-hidden="true" />
-          <input
-            type="text"
-            className="dashboard-search-input"
-            placeholder="Search meetings, transcripts, topics, people..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-
-        <div className="dashboard-topbar-actions">
-          <button
-            type="button"
-            className="btn-schedule-meeting"
-            onClick={() => setIsModalOpen(true)}
-          >
-            <Plus size={15} strokeWidth={2.5} aria-hidden="true" />
-            <span>Schedule Meeting</span>
-          </button>
-
-          <button type="button" className="topbar-icon-btn" aria-label="Notifications">
-            <Bell size={18} strokeWidth={1.8} />
-            <span className="topbar-badge-dot" />
-          </button>
-
-          <div className="topbar-avatar-btn" title="Harsh Vardhan">
-            <span>H</span>
-          </div>
-        </div>
-      </header>
+      {/* 1. Interactive Top Bar with Search, Schedule, Notifications & Profile Menu */}
+      <TopHeader searchQuery={search} onSearchChange={setSearch} placeholder="Search meetings, transcripts, topics, people..." />
 
       {/* 2. Hero Header with Lighthouse Artwork & Doodle */}
       <section className="dashboard-hero" style={{ padding: '28px 36px 24px', marginBottom: '20px' }}>
@@ -359,56 +329,55 @@ export default function InsightsPage() {
       <section className="insights-middle-grid">
         {/* Col 1: Productivity Trend (Combo Chart) */}
         <div className="card-ref" style={{ position: 'relative' }}>
-          <div className="card-ref-header">
-            <div>
-              <h3 className="card-ref-title">Activity &amp; Hours Trend</h3>
-              <p className="card-ref-subtitle">Weekly meeting count and recorded audio hours.</p>
+          <div className="card-ref-header" style={{ alignItems: 'flex-start', gap: '8px', flexWrap: 'nowrap' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h3 className="card-ref-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Activity &amp; Hours Trend</h3>
+              <p className="card-ref-subtitle" style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>Weekly meeting count and recorded audio hours.</p>
             </div>
-            <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
+            <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>
               Last 4 weeks
             </span>
           </div>
 
-          {/* Legend */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '11.5px', color: '#64748B', marginBottom: '14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#60A5FA' }} />
-              <span>Meetings</span>
+          {/* Legend & Hover Info */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11.5px', color: '#64748B', marginBottom: '14px', flexWrap: 'nowrap', minHeight: '22px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', whiteSpace: 'nowrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#60A5FA', flexShrink: 0 }} />
+                <span>Meetings</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#8B5CF6', flexShrink: 0 }} />
+                <span>Hours Recorded</span>
+              </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#8B5CF6' }} />
-              <span>Hours Recorded</span>
-            </div>
+
+            {/* Hover Tooltip (displayed neatly inline) */}
+            {hoveredTrendIdx !== null && trendData[hoveredTrendIdx] && (
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  backgroundColor: '#EFF6FF',
+                  border: '1px solid #DBEAFE',
+                  borderRadius: '6px',
+                  padding: '2px 8px',
+                  fontSize: '11px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <span style={{ fontWeight: 600, color: '#1E40AF' }}>
+                  {trendData[hoveredTrendIdx].date}:
+                </span>
+                <span style={{ color: '#0066FF', fontWeight: 600 }}>{trendData[hoveredTrendIdx].meetings} mtgs</span>
+                <span style={{ color: '#8B5CF6', fontWeight: 600 }}>{trendData[hoveredTrendIdx].hoursFormatted} hrs</span>
+              </div>
+            )}
           </div>
 
-          {/* Hover Tooltip */}
-          {hoveredTrendIdx !== null && trendData[hoveredTrendIdx] && (
-            <div
-              style={{
-                position: 'absolute',
-                top: '75px',
-                left: `${25 + hoveredTrendIdx * 20}%`,
-                transform: 'translateX(-50%)',
-                backgroundColor: '#FFFFFF',
-                border: '1px solid #E2E8F0',
-                borderRadius: '8px',
-                padding: '6px 12px',
-                boxShadow: '0 6px 16px rgba(0,0,0,0.08)',
-                zIndex: 20,
-                fontSize: '11.5px',
-                pointerEvents: 'none',
-              }}
-            >
-              <div style={{ fontWeight: 700, color: '#0F172A', marginBottom: '2px' }}>
-                Week of {trendData[hoveredTrendIdx].date}
-              </div>
-              <div style={{ color: '#0066FF', fontSize: '11px' }}>● {trendData[hoveredTrendIdx].meetings} meetings</div>
-              <div style={{ color: '#8B5CF6', fontSize: '11px' }}>● {trendData[hoveredTrendIdx].hoursFormatted} hrs recorded</div>
-            </div>
-          )}
-
           {/* SVG Combo Chart */}
-          <div style={{ height: '170px', position: 'relative' }}>
+          <div style={{ height: '170px', position: 'relative' }} onMouseLeave={() => setHoveredTrendIdx(null)}>
             <svg viewBox="0 0 400 170" style={{ width: '100%', height: '100%' }}>
               {/* Y-axis guide lines */}
               <line x1="30" y1="20" x2="380" y2="20" stroke="#F1F5F9" strokeWidth="1" />
