@@ -17,6 +17,10 @@ import { supabase } from '../lib/supabase';
 export default function Navigation() {
   const pathname = usePathname();
   const [meetingCount, setMeetingCount] = useState(null);
+  const [userProfile, setUserProfile] = useState({
+    name: 'Harsh Vardhan Tripathi',
+    email: 'harsh@sentio.in',
+  });
 
   useEffect(() => {
     async function checkData() {
@@ -25,8 +29,21 @@ export default function Navigation() {
           .from('meetings')
           .select('*', { count: 'exact', head: true });
         setMeetingCount(count);
+
+        const { data: userData } = await supabase
+          .from('User')
+          .select('name, email')
+          .eq('email', 'harsh@sentio.in')
+          .limit(1);
+
+        if (userData && userData.length > 0) {
+          setUserProfile({
+            name: userData[0].name === 'Harsh' ? 'Harsh Vardhan Tripathi' : userData[0].name,
+            email: userData[0].email,
+          });
+        }
       } catch (err) {
-        console.error('Sidebar meeting count fetch error:', err);
+        console.error('Sidebar data fetch error:', err);
       }
     }
 
@@ -88,10 +105,12 @@ export default function Navigation() {
       <div className="sidebar-footer">
         {/* User Profile Lockup */}
         <div className="sidebar-user">
-          <div className="sidebar-user-avatar">H</div>
+          <div className="sidebar-user-avatar">
+            {userProfile.name ? userProfile.name[0].toUpperCase() : 'H'}
+          </div>
           <div className="sidebar-user-info">
-            <div className="sidebar-user-name">Harsh Vardhan</div>
-            <div className="sidebar-user-email">harsh@example.com</div>
+            <div className="sidebar-user-name">{userProfile.name}</div>
+            <div className="sidebar-user-email">{userProfile.email}</div>
           </div>
           <button type="button" className="sidebar-user-more" aria-label="More user options">
             <MoreVertical size={16} color="#94A3B8" />

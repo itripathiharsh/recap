@@ -424,10 +424,32 @@ export default function MeetingsPage() {
 
                       <td>
                         <div className="upcoming-avatars">
-                          <div className="upcoming-avatar">H</div>
-                          <div className="upcoming-avatar" style={{ backgroundColor: '#10B981' }}>M</div>
-                          <div className="upcoming-avatar" style={{ backgroundColor: '#8B5CF6' }}>S</div>
-                          <span className="upcoming-avatar-more">+2</span>
+                          {(() => {
+                            const meetSpeakers = Array.from(new Set((speakerTurns[m.id] || []).map((t) => t.speaker).filter(Boolean)));
+                            if (meetSpeakers.length === 0) {
+                              return <div className="upcoming-avatar">H</div>;
+                            }
+                            return (
+                              <>
+                                {meetSpeakers.slice(0, 3).map((spk, sIdx) => {
+                                  const bgColors = ['#3B82F6', '#10B981', '#8B5CF6'];
+                                  return (
+                                    <div
+                                      key={spk}
+                                      className="upcoming-avatar"
+                                      style={{ backgroundColor: bgColors[sIdx % bgColors.length] }}
+                                      title={spk}
+                                    >
+                                      {spk[0].toUpperCase()}
+                                    </div>
+                                  );
+                                })}
+                                {meetSpeakers.length > 3 && (
+                                  <span className="upcoming-avatar-more">+{meetSpeakers.length - 3}</span>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       </td>
 
@@ -526,8 +548,7 @@ export default function MeetingsPage() {
                         <span>Summary</span>
                       </div>
                       <p className="detail-summary-text">
-                        {currentMom?.summary ||
-                          'AI summary generated from the Google Meet recording. Discussed key progress, blockers, and aligned on upcoming sprint deliverables.'}
+                        {currentMom?.summary || 'No summary available for this meeting yet.'}
                       </p>
                       <button
                         type="button"
@@ -548,11 +569,7 @@ export default function MeetingsPage() {
                             <li key={i}>{typeof d === 'string' ? d : d.decision || JSON.stringify(d)}</li>
                           ))
                         ) : (
-                          <>
-                            <li>Roadmap alignment on core deliverables</li>
-                            <li>Finalize integration and testing checklist</li>
-                            <li>Automated recording verified for next session</li>
-                          </>
+                          <li style={{ color: '#94A3B8', listStyle: 'none' }}>No key takeaways recorded.</li>
                         )}
                       </ul>
                     </div>
@@ -579,7 +596,7 @@ export default function MeetingsPage() {
                       <div>
                         <div className="detail-meta-label">Participants</div>
                         <div className="detail-meta-val tabular-nums">
-                          {currentSpeakers.length > 0 ? currentSpeakers.length : 3}
+                          {currentSpeakers.length}
                         </div>
                       </div>
                     </div>
@@ -599,7 +616,7 @@ export default function MeetingsPage() {
                   <div className="detail-actions-section">
                     <div className="detail-actions-header">
                       <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A' }}>
-                        Action Items ({Array.isArray(currentMom?.action_items) ? currentMom.action_items.length : 3})
+                        Action Items ({Array.isArray(currentMom?.action_items) ? currentMom.action_items.length : 0})
                       </span>
                       <button
                         type="button"
@@ -635,50 +652,14 @@ export default function MeetingsPage() {
                                   </div>
                                   <span>{item.owner || 'Harsh'}</span>
                                 </div>
-                                <span className="detail-action-due">{item.due || '21 Sept'}</span>
+                                <span className="detail-action-due">{item.due || 'not specified'}</span>
                               </div>
                             </div>
                           );
                         })
                       ) : (
-                        <div>
-                          <div
-                            className={`detail-action-row ${completedActions.has('sample-1') ? 'done' : ''}`}
-                            onClick={() => toggleActionDone('sample-1')}
-                          >
-                            <div className="detail-action-left">
-                              <div className={`focus-checkbox ${completedActions.has('sample-1') ? 'checked' : ''}`}>
-                                {completedActions.has('sample-1') && <Check size={11} strokeWidth={3} />}
-                              </div>
-                              <span className="detail-action-text">Share updated PRD with the team</span>
-                            </div>
-                            <div className="detail-action-right">
-                              <div className="detail-action-assignee">
-                                <div className="detail-action-avatar">H</div>
-                                <span>Harsh</span>
-                              </div>
-                              <span className="detail-action-due">21 Sept</span>
-                            </div>
-                          </div>
-
-                          <div
-                            className={`detail-action-row ${completedActions.has('sample-2') ? 'done' : ''}`}
-                            onClick={() => toggleActionDone('sample-2')}
-                          >
-                            <div className="detail-action-left">
-                              <div className={`focus-checkbox ${completedActions.has('sample-2') ? 'checked' : ''}`}>
-                                {completedActions.has('sample-2') && <Check size={11} strokeWidth={3} />}
-                              </div>
-                              <span className="detail-action-text">Schedule user testing sessions</span>
-                            </div>
-                            <div className="detail-action-right">
-                              <div className="detail-action-assignee">
-                                <div className="detail-action-avatar" style={{ backgroundColor: '#10B981' }}>M</div>
-                                <span>Mohit</span>
-                              </div>
-                              <span className="detail-action-due">22 Sept</span>
-                            </div>
-                          </div>
+                        <div style={{ padding: '14px', textAlign: 'center', color: '#64748B', fontSize: '12.5px' }}>
+                          No action items recorded for this meeting.
                         </div>
                       )}
                     </div>
@@ -814,48 +795,54 @@ export default function MeetingsPage() {
               {selectedTab === 'participants' && (
                 <div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {(currentSpeakers.length > 0 ? currentSpeakers : ['Harsh Vardhan Tripathi', 'Mohit', 'SPEAKER_02']).map((speaker, idx) => (
-                      <div
-                        key={idx}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '12px',
-                          border: '1px solid #EDF2F7',
-                          borderRadius: '10px',
-                          backgroundColor: '#F8FAFC',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <div
-                            style={{
-                              width: '32px',
-                              height: '32px',
-                              borderRadius: '50%',
-                              backgroundColor: idx === 0 ? '#3B82F6' : idx === 1 ? '#10B981' : '#8B5CF6',
-                              color: '#FFFFFF',
-                              fontSize: '12px',
-                              fontWeight: 700,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}
-                          >
-                            {speaker[0].toUpperCase()}
-                          </div>
-                          <div>
-                            <div style={{ fontSize: '13.5px', fontWeight: 600, color: '#0F172A' }}>
-                              {speaker}
+                    {currentSpeakers.length > 0 ? (
+                      currentSpeakers.map((speaker, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '12px',
+                            border: '1px solid #EDF2F7',
+                            borderRadius: '10px',
+                            backgroundColor: '#F8FAFC',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div
+                              style={{
+                                width: '32px',
+                                height: '32px',
+                                borderRadius: '50%',
+                                backgroundColor: idx === 0 ? '#3B82F6' : idx === 1 ? '#10B981' : '#8B5CF6',
+                                color: '#FFFFFF',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              {speaker[0].toUpperCase()}
                             </div>
-                            <div style={{ fontSize: '11px', color: '#64748B' }}>
-                              {idx === 0 ? 'Organizer / Host' : 'Attendee'}
+                            <div>
+                              <div style={{ fontSize: '13.5px', fontWeight: 600, color: '#0F172A' }}>
+                                {speaker}
+                              </div>
+                              <div style={{ fontSize: '11px', color: '#64748B' }}>
+                                {idx === 0 ? 'Organizer / Host' : 'Attendee'}
+                              </div>
                             </div>
                           </div>
+                          <span style={{ fontSize: '12px', color: '#0066FF', fontWeight: 600 }}>Active</span>
                         </div>
-                        <span style={{ fontSize: '12px', color: '#0066FF', fontWeight: 600 }}>Active</span>
+                      ))
+                    ) : (
+                      <div style={{ padding: '32px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
+                        No participants recorded for this meeting.
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
               )}

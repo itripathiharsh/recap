@@ -17,6 +17,7 @@ export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState('general');
   const [supabaseConnected, setSupabaseConnected] = useState(null);
   const [dbStats, setDbStats] = useState({ meetings: 0, mom: 0 });
+  const [userProfile, setUserProfile] = useState({ name: 'Harsh Vardhan Tripathi', email: 'harsh@sentio.in' });
 
   useEffect(() => {
     async function testConnection() {
@@ -28,6 +29,16 @@ export default function SettingsPage() {
         const { count: momCount, error: momErr } = await supabase
           .from('mom')
           .select('*', { count: 'exact', head: true });
+
+        const { data: userData } = await supabase
+          .from('User')
+          .select('name, email')
+          .limit(1)
+          .single();
+
+        if (userData?.name) {
+          setUserProfile({ name: userData.name, email: userData.email || 'harsh@sentio.in' });
+        }
 
         if (mErr) throw mErr;
         setSupabaseConnected(true);
@@ -129,12 +140,12 @@ export default function SettingsPage() {
 
               <div className="form-group">
                 <label className="form-label">User Profile</label>
-                <input type="text" className="form-input" value="Harsh" disabled />
+                <input type="text" className="form-input" value={`${userProfile.name} (${userProfile.email})`} disabled />
               </div>
 
               <div className="form-group">
                 <label className="form-label">Authentication Mode</label>
-                <input type="text" className="form-input" value="Personal Single-User (Supabase Auth)" disabled />
+                <input type="text" className="form-input" value="Supabase Auth (Single-Tenant Session)" disabled />
               </div>
             </div>
           )}
@@ -172,17 +183,22 @@ export default function SettingsPage() {
 
               <div className="form-group">
                 <label className="form-label">Audio Retention Period</label>
-                <input type="text" className="form-input" value="7 days (automatically cleaned from Oracle VM)" disabled />
+                <input type="text" className="form-input" value="7 days (automatically cleaned from local disk)" disabled />
               </div>
 
               <div className="form-group">
                 <label className="form-label">Speech-to-Text Model</label>
-                <input type="text" className="form-input" value="faster-whisper (small)" disabled />
+                <input type="text" className="form-input" value="Groq Whisper Large v3 (groq-whisper-large-v3) / faster-whisper" disabled />
               </div>
 
               <div className="form-group">
                 <label className="form-label">Speaker Diarization Model</label>
                 <input type="text" className="form-input" value="pyannote.audio (speaker-diarization-3.1)" disabled />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">MOM Generation Model</label>
+                <input type="text" className="form-input" value="Groq LLaMA 3.3 (llama-3.3-70b-versatile) / Gemini 2.0" disabled />
               </div>
             </div>
           )}

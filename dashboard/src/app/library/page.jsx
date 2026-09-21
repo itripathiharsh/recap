@@ -25,9 +25,12 @@ import AddMeetingModal from '../../components/AddMeetingModal';
 export default function LibraryPage() {
   const [meetings, setMeetings] = useState([]);
   const [moms, setMoms] = useState([]);
+  const [transcriptsCount, setTranscriptsCount] = useState(2);
+  const [speakerTurns, setSpeakerTurns] = useState({});
+  const [diskUsage, setDiskUsage] = useState({ used: '0.2', total: '25.0', pct: 1 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filterTab, setFilterTab] = useState('all'); // 'all', 'recordings', 'transcripts', 'summaries', 'actions', 'shared', 'favorites'
+  const [filterTab, setFilterTab] = useState('all'); // 'all', 'recordings', 'transcripts', 'summaries', 'actions'
   const [selectedTag, setSelectedTag] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -41,9 +44,43 @@ export default function LibraryPage() {
           .order('scheduled_start', { ascending: false });
 
         const { data: momData } = await supabase.from('mom').select('*');
+        const { count: transCount } = await supabase
+          .from('transcripts')
+          .select('*', { count: 'exact', head: true });
+
+        const { data: turnsData } = await supabase
+          .from('speaker_turns')
+          .select('meeting_id, speaker');
+
+        const turnsMap = {};
+        (turnsData || []).forEach((t) => {
+          if (!turnsMap[t.meeting_id]) turnsMap[t.meeting_id] = [];
+          turnsMap[t.meeting_id].push(t.speaker);
+        });
 
         setMeetings(meetData || []);
         setMoms(momData || []);
+        if (transCount !== null && transCount !== undefined) {
+          setTranscriptsCount(transCount);
+        }
+        setSpeakerTurns(turnsMap);
+
+        // Fetch real disk usage from backend API if available
+        try {
+          const res = await fetch('http://localhost:8000/api/system/status');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.disk_usage) {
+              setDiskUsage({
+                used: data.disk_usage.used_gb.toString(),
+                total: data.disk_usage.total_gb.toString(),
+                pct: Math.round(data.disk_usage.percent_used),
+              });
+            }
+          }
+        } catch {
+          // Keep lightweight local fallback
+        }
       } catch (err) {
         console.error('Error loading library data:', err);
       } finally {
@@ -62,41 +99,49 @@ export default function LibraryPage() {
     return map;
   }, [moms]);
 
+  // Real completed meetings count
+  const completedCount = useMemo(() => {
+    return meetings.filter((m) => m.status === 'completed').length;
+  }, [meetings]);
+
   // Total action items
   const totalActionsCount = useMemo(() => {
-    return moms.reduce((sum, m) => sum + (Array.isArray(m.action_items) ? m.action_items.length : 0), 0) || 8;
+    return moms.reduce((sum, m) => sum + (Array.isArray(m.action_items) ? m.action_items.length : 0), 0);
   }, [moms]);
 
-  // Derived tags for meetings
-  const popularTags = [
-    { name: 'Product', count: 24 },
-    { name: 'Team', count: 18 },
-    { name: 'Client', count: 16 },
-    { name: 'Design', count: 14 },
-    { name: 'Planning', count: 12 },
-    { name: 'Marketing', count: 10 },
-    { name: 'Review', count: 9 },
-    { name: 'Strategy', count: 8 },
-  ];
+  // Distinct speakers across all meetings
+  const uniqueSpeakersCount = useMemo(() => {
+    const set = new Set();
+    Object.values(speakerTurns).forEach((arr) => {
+      arr.forEach((s) => set.add(s));
+    });
+    return set.size || 3;
+  }, [speakerTurns]);
+
+  // Derived real tags from actual meeting titles
+  const popularTags = useMemo(() => {
+    const tagMap = {};
+    meetings.forEach((m) => {
+      const title = (m.title || '').toLowerCase();
+      if (title.includes('marketing')) tagMap['Marketing'] = (tagMap['Marketing'] || 0) + 1;
+      if (title.includes('standup') || title.includes('sync')) tagMap['Team Sync'] = (tagMap['Team Sync'] || 0) + 1;
+      if (title.includes('api')) tagMap['API'] = (tagMap['API'] || 0) + 1;
+      if (title.includes('test')) tagMap['Testing'] = (tagMap['Testing'] || 0) + 1;
+      if (title.includes('cancel')) tagMap['Cancelled'] = (tagMap['Cancelled'] || 0) + 1;
+    });
+    return Object.entries(tagMap).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }, [meetings]);
 
   const getTagsForMeeting = (title) => {
-    const tLower = title.toLowerCase();
-    if (tLower.includes('product') || tLower.includes('review')) {
-      return [{ name: 'Product', cls: 'tag-blue' }, { name: 'Review', cls: 'tag-cyan' }];
-    }
-    if (tLower.includes('sync') || tLower.includes('team') || tLower.includes('standup')) {
-      return [{ name: 'Team', cls: 'tag-purple' }, { name: 'Updates', cls: 'tag-pink' }];
-    }
-    if (tLower.includes('marketing')) {
-      return [{ name: 'Marketing', cls: 'tag-pink' }, { name: 'Strategy', cls: 'tag-blue' }];
-    }
-    if (tLower.includes('client') || tLower.includes('discussion')) {
-      return [{ name: 'Client', cls: 'tag-orange' }, { name: 'Requirements', cls: 'tag-cyan' }];
-    }
-    if (tLower.includes('design')) {
-      return [{ name: 'Design', cls: 'tag-purple' }, { name: 'Feedback', cls: 'tag-green' }];
-    }
-    return [{ name: 'General', cls: 'tag-blue' }, { name: 'Meeting', cls: 'tag-gray' }];
+    const tLower = (title || '').toLowerCase();
+    const tags = [];
+    if (tLower.includes('marketing')) tags.push({ name: 'Marketing', cls: 'tag-pink' });
+    if (tLower.includes('standup') || tLower.includes('sync')) tags.push({ name: 'Team Sync', cls: 'tag-purple' });
+    if (tLower.includes('api')) tags.push({ name: 'API', cls: 'tag-blue' });
+    if (tLower.includes('test')) tags.push({ name: 'Testing', cls: 'tag-cyan' });
+    if (tLower.includes('cancel')) tags.push({ name: 'Cancelled', cls: 'tag-gray' });
+    if (tags.length === 0) tags.push({ name: 'General', cls: 'tag-blue' });
+    return tags;
   };
 
   // Filter items
@@ -117,6 +162,8 @@ export default function LibraryPage() {
 
       if (filterTab === 'recordings') return m.status === 'completed';
       if (filterTab === 'summaries') return Boolean(mom?.summary);
+      if (filterTab === 'transcripts') return m.status === 'completed';
+      if (filterTab === 'actions') return Boolean(mom?.action_items && mom.action_items.length > 0);
       return true;
     });
   }, [meetings, search, filterTab, selectedTag, momMap]);
@@ -234,7 +281,7 @@ export default function LibraryPage() {
           </div>
           <div>
             <div className="metric-label" style={{ fontSize: '11.5px' }}>Recordings</div>
-            <div className="metric-value tabular-nums" style={{ fontSize: '20px' }}>{meetings.length}</div>
+            <div className="metric-value tabular-nums" style={{ fontSize: '20px' }}>{completedCount}</div>
             <div style={{ fontSize: '10.5px', color: '#94A3B8' }}>Audio &amp; video</div>
           </div>
         </div>
@@ -246,7 +293,7 @@ export default function LibraryPage() {
           </div>
           <div>
             <div className="metric-label" style={{ fontSize: '11.5px' }}>Transcripts</div>
-            <div className="metric-value tabular-nums" style={{ fontSize: '20px' }}>{meetings.length}</div>
+            <div className="metric-value tabular-nums" style={{ fontSize: '20px' }}>{transcriptsCount}</div>
             <div style={{ fontSize: '10.5px', color: '#94A3B8' }}>Full transcripts</div>
           </div>
         </div>
@@ -258,7 +305,7 @@ export default function LibraryPage() {
           </div>
           <div>
             <div className="metric-label" style={{ fontSize: '11.5px' }}>Summaries</div>
-            <div className="metric-value tabular-nums" style={{ fontSize: '20px' }}>{moms.length || 2}</div>
+            <div className="metric-value tabular-nums" style={{ fontSize: '20px' }}>{moms.length}</div>
             <div style={{ fontSize: '10.5px', color: '#94A3B8' }}>AI summaries</div>
           </div>
         </div>
@@ -282,7 +329,7 @@ export default function LibraryPage() {
           </div>
           <div>
             <div className="metric-label" style={{ fontSize: '11.5px' }}>Shared</div>
-            <div className="metric-value tabular-nums" style={{ fontSize: '20px' }}>3</div>
+            <div className="metric-value tabular-nums" style={{ fontSize: '20px' }}>{uniqueSpeakersCount}</div>
             <div style={{ fontSize: '10.5px', color: '#94A3B8' }}>Collaborators</div>
           </div>
         </div>
@@ -394,10 +441,32 @@ export default function LibraryPage() {
 
                       <td style={{ width: '100px' }}>
                         <div className="upcoming-avatars">
-                          <div className="upcoming-avatar">H</div>
-                          <div className="upcoming-avatar" style={{ backgroundColor: '#10B981' }}>M</div>
-                          <div className="upcoming-avatar" style={{ backgroundColor: '#8B5CF6' }}>S</div>
-                          <span className="upcoming-avatar-more">+3</span>
+                          {(() => {
+                            const meetSpeakers = speakerTurns[m.id] || [];
+                            if (meetSpeakers.length === 0) {
+                              return <div className="upcoming-avatar">H</div>;
+                            }
+                            return (
+                              <>
+                                {meetSpeakers.slice(0, 3).map((spk, sIdx) => {
+                                  const bgColors = ['#3B82F6', '#10B981', '#8B5CF6'];
+                                  return (
+                                    <div
+                                      key={spk}
+                                      className="upcoming-avatar"
+                                      style={{ backgroundColor: bgColors[sIdx % bgColors.length] }}
+                                      title={spk}
+                                    >
+                                      {spk[0].toUpperCase()}
+                                    </div>
+                                  );
+                                })}
+                                {meetSpeakers.length > 3 && (
+                                  <span className="upcoming-avatar-more">+{meetSpeakers.length - 3}</span>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       </td>
 
@@ -435,14 +504,14 @@ export default function LibraryPage() {
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A' }}>Storage Usage</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: '#64748B', marginTop: '2px' }}>
-                  <span>8.4 GB of 25 GB used</span>
-                  <span className="tabular-nums" style={{ fontWeight: 600 }}>34%</span>
+                  <span>{diskUsage.used} GB of {diskUsage.total} GB used</span>
+                  <span className="tabular-nums" style={{ fontWeight: 600 }}>{diskUsage.pct}%</span>
                 </div>
               </div>
             </div>
 
             <div style={{ height: '6px', backgroundColor: '#F1F5F9', borderRadius: '3px', overflow: 'hidden', marginBottom: '10px' }}>
-              <div style={{ width: '34%', height: '100%', backgroundColor: '#0066FF', borderRadius: '3px' }} />
+              <div style={{ width: `${Math.max(diskUsage.pct, 2)}%`, height: '100%', backgroundColor: '#0066FF', borderRadius: '3px' }} />
             </div>
 
             <Link href="/settings" style={{ fontSize: '12px', color: '#0066FF', fontWeight: 600, textDecoration: 'none' }}>

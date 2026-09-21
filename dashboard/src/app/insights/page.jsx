@@ -70,37 +70,116 @@ export default function InsightsPage() {
     return moms.reduce((sum, m) => sum + (Array.isArray(m.action_items) ? m.action_items.length : 0), 0) || 8;
   }, [moms]);
 
-  // Topic distribution
-  const topics = [
-    { name: 'Product Development', count: 28, pct: 28, color: '#0066FF' },
-    { name: 'Client Updates', count: 18, pct: 18, color: '#00A3FF' },
-    { name: 'Team Sync', count: 15, pct: 15, color: '#8B5CF6' },
-    { name: 'Planning', count: 12, pct: 12, color: '#EC4899' },
-    { name: 'Design', count: 10, pct: 10, color: '#F97316' },
-    { name: 'Hiring', count: 8, pct: 8, color: '#EAB308' },
-    { name: 'Others', count: 6, pct: 6, color: '#94A3B8' },
-  ];
+  // Topic distribution derived dynamically from real meeting titles
+  const topics = useMemo(() => {
+    if (meetings.length === 0) return [];
+    const topicCounts = {};
+    meetings.forEach((m) => {
+      const title = (m.title || '').toLowerCase();
+      let cat = 'General';
+      if (title.includes('marketing')) cat = 'Marketing';
+      else if (title.includes('standup') || title.includes('sync') || title.includes('team')) cat = 'Team Sync';
+      else if (title.includes('api') || title.includes('test')) cat = 'API & Integration';
+      else if (title.includes('cancel')) cat = 'Ad-hoc Calls';
 
-  // Collaborators with real speakers
+      topicCounts[cat] = (topicCounts[cat] || 0) + 1;
+    });
+
+    const colors = {
+      'API & Integration': '#0066FF',
+      'Ad-hoc Calls': '#00A3FF',
+      'Marketing': '#8B5CF6',
+      'Team Sync': '#EC4899',
+      'General': '#94A3B8',
+    };
+
+    return Object.entries(topicCounts).map(([name, count]) => ({
+      name,
+      count,
+      pct: Math.round((count / meetings.length) * 100),
+      color: colors[name] || '#64748B',
+    })).sort((a, b) => b.count - a.count);
+  }, [meetings]);
+
+  // Real Collaborators grouped by speaker from speaker_turns
   const collaborators = useMemo(() => {
-    const defaultList = [
-      { name: 'Harsh Vardhan Tripathi', count: 12, pct: 90, color: '#0066FF' },
-      { name: 'Mohit', count: 9, pct: 68, color: '#60A5FA' },
-      { name: 'SPEAKER_02', count: 8, pct: 60, color: '#8B5CF6' },
-      { name: 'Priya Sharma', count: 7, pct: 52, color: '#EC4899' },
-      { name: 'Neha Kapoor', count: 6, pct: 45, color: '#F97316' },
-    ];
-    return defaultList;
-  }, []);
+    const turnCounts = {};
+    speakerTurns.forEach((t) => {
+      if (!t.speaker) return;
+      turnCounts[t.speaker] = (turnCounts[t.speaker] || 0) + 1;
+    });
 
-  // Trend Data for Combo Chart
-  const trendData = [
-    { date: 'Aug 25', meetings: 4, score: 6.2 },
-    { date: 'Sep 1', meetings: 5, score: 7.0 },
-    { date: 'Sep 8', meetings: 6, score: 7.8 },
-    { date: 'Sep 15', meetings: 7, score: 8.4 },
-    { date: 'Sep 22', meetings: 5, score: 7.5 },
-  ];
+    const colors = ['#0066FF', '#10B981', '#8B5CF6'];
+    const maxTurns = Math.max(...Object.values(turnCounts), 1);
+
+    return Object.entries(turnCounts)
+      .map(([name, count], idx) => ({
+        name,
+        count,
+        pct: Math.round((count / maxTurns) * 100),
+        color: colors[idx % colors.length],
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [speakerTurns]);
+
+  // Real Weekly Activity & Hours over time
+  const trendData = useMemo(() => {
+    const nowMs = Date.now();
+    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+    const weeks = [
+      { date: 'Aug 31', meetings: 0, hours: 0 },
+      { date: 'Sep 7', meetings: 0, hours: 0 },
+      { date: 'Sep 14', meetings: 0, hours: 0 },
+      { date: 'Sep 21', meetings: 0, hours: 0 },
+    ];
+
+    meetings.forEach((m) => {
+      const mTime = new Date(m.scheduled_start).getTime();
+      const diffWeeks = Math.floor((nowMs - mTime) / oneWeekMs);
+      const idx = 3 - diffWeeks;
+      if (idx >= 0 && idx < 4) {
+        weeks[idx].meetings += 1;
+        const durMins = m.expected_duration_minutes || (m.actual_duration_seconds ? Math.round(m.actual_duration_seconds / 60) : 30);
+        weeks[idx].hours += durMins / 60;
+      }
+    });
+
+    return weeks.map((w) => ({
+      ...w,
+      hoursFormatted: w.hours.toFixed(1),
+    }));
+  }, [meetings]);
+
+  // Real takeaways extracted from MOM decisions
+  const realTakeaways = useMemo(() => {
+    const list = [];
+    moms.forEach((m) => {
+      if (Array.isArray(m.decisions)) {
+        m.decisions.forEach((d) => {
+          list.push({
+            title: typeof d === 'string' ? d : d.decision || 'Meeting decision recorded',
+            sub: 'Extracted from meeting MOM',
+            icon: Lightbulb,
+            color: '#D97706',
+            bg: '#FEF3C7',
+          });
+        });
+      }
+    });
+
+    if (list.length === 0) {
+      return [
+        {
+          title: 'Meeting intelligence active',
+          sub: 'Record meetings to generate automated takeaways',
+          icon: CheckCircle2,
+          color: '#16A34A',
+          bg: '#DCFCE7',
+        },
+      ];
+    }
+    return list.slice(0, 4);
+  }, [moms]);
 
   return (
     <div>
@@ -224,9 +303,9 @@ export default function InsightsPage() {
             <div className="metric-label">Total Meetings</div>
             <div className="metric-value-row">
               <span className="metric-value tabular-nums">{totalMeetingsCount}</span>
-              <span className="metric-trend tabular-nums">&uarr; 12%</span>
+              <span className="metric-trend tabular-nums">All time</span>
             </div>
-            <div className="metric-trend-sub">vs last month</div>
+            <div className="metric-trend-sub">in recap database</div>
           </div>
         </div>
 
@@ -239,9 +318,9 @@ export default function InsightsPage() {
             <div className="metric-label">Total Hours</div>
             <div className="metric-value-row">
               <span className="metric-value tabular-nums">{totalHoursRecorded}</span>
-              <span className="metric-trend tabular-nums">&uarr; 28%</span>
+              <span className="metric-trend tabular-nums">Total</span>
             </div>
-            <div className="metric-trend-sub">vs last month</div>
+            <div className="metric-trend-sub">recorded audio</div>
           </div>
         </div>
 
@@ -253,10 +332,10 @@ export default function InsightsPage() {
           <div>
             <div className="metric-label">People Met</div>
             <div className="metric-value-row">
-              <span className="metric-value tabular-nums">{uniqueSpeakers.length || 3}</span>
-              <span className="metric-trend tabular-nums">&uarr; 8%</span>
+              <span className="metric-value tabular-nums">{uniqueSpeakers.length}</span>
+              <span className="metric-trend tabular-nums">Distinct</span>
             </div>
-            <div className="metric-trend-sub">vs last month</div>
+            <div className="metric-trend-sub">identified speakers</div>
           </div>
         </div>
 
@@ -269,9 +348,9 @@ export default function InsightsPage() {
             <div className="metric-label">Action Items</div>
             <div className="metric-value-row">
               <span className="metric-value tabular-nums">{totalActionsCount}</span>
-              <span className="metric-trend tabular-nums">&uarr; 35%</span>
+              <span className="metric-trend tabular-nums">Extracted</span>
             </div>
-            <div className="metric-trend-sub">vs last month</div>
+            <div className="metric-trend-sub">from meeting MOMs</div>
           </div>
         </div>
       </section>
@@ -282,11 +361,11 @@ export default function InsightsPage() {
         <div className="card-ref" style={{ position: 'relative' }}>
           <div className="card-ref-header">
             <div>
-              <h3 className="card-ref-title">Productivity Trend</h3>
-              <p className="card-ref-subtitle">Your meeting activity and productivity over time.</p>
+              <h3 className="card-ref-title">Activity &amp; Hours Trend</h3>
+              <p className="card-ref-subtitle">Weekly meeting count and recorded audio hours.</p>
             </div>
             <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
-              Last 30 days &or;
+              Last 4 weeks
             </span>
           </div>
 
@@ -298,17 +377,17 @@ export default function InsightsPage() {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#8B5CF6' }} />
-              <span>Productivity Score</span>
+              <span>Hours Recorded</span>
             </div>
           </div>
 
           {/* Hover Tooltip */}
-          {hoveredTrendIdx !== null && (
+          {hoveredTrendIdx !== null && trendData[hoveredTrendIdx] && (
             <div
               style={{
                 position: 'absolute',
                 top: '75px',
-                left: `${35 + hoveredTrendIdx * 14}%`,
+                left: `${25 + hoveredTrendIdx * 20}%`,
                 transform: 'translateX(-50%)',
                 backgroundColor: '#FFFFFF',
                 border: '1px solid #E2E8F0',
@@ -321,10 +400,10 @@ export default function InsightsPage() {
               }}
             >
               <div style={{ fontWeight: 700, color: '#0F172A', marginBottom: '2px' }}>
-                {trendData[hoveredTrendIdx].date}, 2025
+                Week of {trendData[hoveredTrendIdx].date}
               </div>
               <div style={{ color: '#0066FF', fontSize: '11px' }}>● {trendData[hoveredTrendIdx].meetings} meetings</div>
-              <div style={{ color: '#8B5CF6', fontSize: '11px' }}>● Productivity: {trendData[hoveredTrendIdx].score}</div>
+              <div style={{ color: '#8B5CF6', fontSize: '11px' }}>● {trendData[hoveredTrendIdx].hoursFormatted} hrs recorded</div>
             </div>
           )}
 
@@ -338,23 +417,23 @@ export default function InsightsPage() {
               <line x1="30" y1="140" x2="380" y2="140" stroke="#E2E8F0" strokeWidth="1" />
 
               {/* Y-axis labels */}
-              <text x="18" y="24" fontSize="10" fill="#94A3B8">10</text>
-              <text x="18" y="64" fontSize="10" fill="#94A3B8">8</text>
-              <text x="18" y="104" fontSize="10" fill="#94A3B8">4</text>
+              <text x="18" y="24" fontSize="10" fill="#94A3B8">4</text>
+              <text x="18" y="64" fontSize="10" fill="#94A3B8">3</text>
+              <text x="18" y="104" fontSize="10" fill="#94A3B8">2</text>
               <text x="18" y="144" fontSize="10" fill="#94A3B8">0</text>
 
               {/* Vertical Bars */}
               {trendData.map((d, i) => {
-                const x = 70 + i * 70;
-                const h = (d.meetings / 10) * 120;
+                const x = 70 + i * 85;
+                const h = Math.min((d.meetings / 4) * 120, 120);
                 const y = 140 - h;
                 return (
                   <g key={d.date} onMouseEnter={() => setHoveredTrendIdx(i)}>
                     <rect
-                      x={x - 12}
+                      x={x - 14}
                       y={y}
-                      width="24"
-                      height={h}
+                      width="28"
+                      height={Math.max(h, 4)}
                       rx="4"
                       fill={hoveredTrendIdx === i ? '#0066FF' : '#93C5FD'}
                       opacity={hoveredTrendIdx === i ? '1' : '0.6'}
@@ -367,19 +446,25 @@ export default function InsightsPage() {
                 );
               })}
 
-              {/* Trend Line */}
-              <path
-                d="M 70 85 L 140 70 L 210 55 L 280 40 L 350 55"
-                fill="none"
-                stroke="#8B5CF6"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
+              {/* Trend Line for Hours */}
+              {trendData.length > 1 && (
+                <path
+                  d={trendData.reduce((acc, d, i) => {
+                    const x = 70 + i * 85;
+                    const y = 140 - Math.min((d.hours / 4) * 120, 120);
+                    return i === 0 ? `M ${x} ${y}` : `${acc} L ${x} ${y}`;
+                  }, '')}
+                  fill="none"
+                  stroke="#8B5CF6"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              )}
               {/* Trend Line Points */}
               {trendData.map((d, i) => {
-                const x = 70 + i * 70;
-                const y = 140 - (d.score / 10) * 120;
+                const x = 70 + i * 85;
+                const y = 140 - Math.min((d.hours / 4) * 120, 120);
                 return (
                   <circle
                     key={d.date}
@@ -406,7 +491,7 @@ export default function InsightsPage() {
               <p className="card-ref-subtitle">Where your meeting time goes.</p>
             </div>
             <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
-              Last 30 days &or;
+              All meetings
             </span>
           </div>
 
@@ -414,14 +499,30 @@ export default function InsightsPage() {
             {/* Donut Chart with Center Hours */}
             <div style={{ position: 'relative', width: '130px', height: '130px', flexShrink: 0 }}>
               <svg viewBox="0 0 36 36" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
-                {/* Segments */}
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#0066FF" strokeWidth="5.5" strokeDasharray="28 72" strokeDashoffset="0" />
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#00A3FF" strokeWidth="5.5" strokeDasharray="18 82" strokeDashoffset="-28" />
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#8B5CF6" strokeWidth="5.5" strokeDasharray="15 85" strokeDashoffset="-46" />
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#EC4899" strokeWidth="5.5" strokeDasharray="12 88" strokeDashoffset="-61" />
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#F97316" strokeWidth="5.5" strokeDasharray="10 90" strokeDashoffset="-73" />
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#FBBF24" strokeWidth="5.5" strokeDasharray="8 92" strokeDashoffset="-83" />
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#94A3B8" strokeWidth="5.5" strokeDasharray="9 91" strokeDashoffset="-91" />
+                {topics.length === 0 ? (
+                  <circle cx="18" cy="18" r="14" fill="none" stroke="#E2E8F0" strokeWidth="5.5" />
+                ) : (
+                  (() => {
+                    let accumulated = 0;
+                    return topics.map((t) => {
+                      const offset = -accumulated;
+                      accumulated += t.pct;
+                      return (
+                        <circle
+                          key={t.name}
+                          cx="18"
+                          cy="18"
+                          r="14"
+                          fill="none"
+                          stroke={t.color}
+                          strokeWidth="5.5"
+                          strokeDasharray={`${t.pct} ${100 - t.pct}`}
+                          strokeDashoffset={offset}
+                        />
+                      );
+                    });
+                  })()
+                )}
               </svg>
 
               {/* Center Text */}
@@ -443,15 +544,19 @@ export default function InsightsPage() {
 
             {/* Legend with Percentages */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0, fontSize: '11px' }}>
-              {topics.slice(0, 6).map((t) => (
-                <div key={t.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: t.color, flexShrink: 0 }} />
-                    <span style={{ color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+              {topics.length === 0 ? (
+                <div style={{ color: '#94A3B8', fontSize: '12px' }}>No meeting topics yet</div>
+              ) : (
+                topics.slice(0, 6).map((t) => (
+                  <div key={t.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: t.color, flexShrink: 0 }} />
+                      <span style={{ color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+                    </div>
+                    <span className="tabular-nums" style={{ fontWeight: 600, color: '#0F172A', marginLeft: '6px' }}>{t.pct}%</span>
                   </div>
-                  <span className="tabular-nums" style={{ fontWeight: 600, color: '#0F172A', marginLeft: '6px' }}>{t.pct}%</span>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -461,20 +566,15 @@ export default function InsightsPage() {
           <div className="card-ref-header">
             <div>
               <h3 className="card-ref-title">Key Takeaways</h3>
-              <p className="card-ref-subtitle">Top insights from your recent meetings.</p>
+              <p className="card-ref-subtitle">Top decisions from your meeting MOMs.</p>
             </div>
           </div>
 
           <div>
-            {[
-              { title: 'Product launch is on track', sub: 'Based on 4 recent meetings', icon: Lightbulb, color: '#D97706', bg: '#FEF3C7' },
-              { title: 'Increased collaboration', sub: 'You met 8 new people this month', icon: Users, color: '#0284C7', bg: '#E0F2FE' },
-              { title: 'More time in deep work', sub: 'Productive meetings up by 28%', icon: TrendingUp, color: '#7C3AED', bg: '#F3E8FF' },
-              { title: 'Action item completion', sub: 'Completed 76% of action items', icon: CheckCircle2, color: '#16A34A', bg: '#DCFCE7' },
-            ].map((item) => {
+            {realTakeaways.map((item, idx) => {
               const Icon = item.icon;
               return (
-                <div key={item.title} className="takeaway-card-ref">
+                <div key={idx} className="takeaway-card-ref">
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
                     <div className="takeaway-icon-box" style={{ backgroundColor: item.bg, color: item.color }}>
                       <Icon size={16} />
@@ -503,32 +603,36 @@ export default function InsightsPage() {
           <div className="card-ref-header">
             <div>
               <h3 className="card-ref-title">Most Discussed Topics</h3>
-              <p className="card-ref-subtitle">What you and your teams talk about most.</p>
+              <p className="card-ref-subtitle">Distribution of meeting subjects.</p>
             </div>
             <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
-              Last 30 days &or;
+              All time
             </span>
           </div>
 
           <div>
-            {topics.map((t) => (
-              <div key={t.name} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '130px', flexShrink: 0 }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: t.color }} />
-                  <span style={{ fontSize: '12px', color: '#0F172A', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {t.name}
+            {topics.length === 0 ? (
+              <div style={{ color: '#94A3B8', fontSize: '12.5px', padding: '16px 0' }}>No topics recorded yet</div>
+            ) : (
+              topics.map((t) => (
+                <div key={t.name} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '130px', flexShrink: 0 }}>
+                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: t.color }} />
+                    <span style={{ fontSize: '12px', color: '#0F172A', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {t.name}
+                    </span>
+                  </div>
+
+                  <div style={{ flex: 1, height: '8px', backgroundColor: '#F1F5F9', borderRadius: '4px', overflow: 'hidden' }}>
+                    <div style={{ width: `${(t.count / Math.max(totalMeetingsCount, 1)) * 100}%`, height: '100%', backgroundColor: t.color, borderRadius: '4px' }} />
+                  </div>
+
+                  <span className="tabular-nums" style={{ fontSize: '11.5px', fontWeight: 600, color: '#64748B', width: '22px', textAlign: 'right' }}>
+                    {t.count}
                   </span>
                 </div>
-
-                <div style={{ flex: 1, height: '8px', backgroundColor: '#F1F5F9', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ width: `${(t.count / 28) * 100}%`, height: '100%', backgroundColor: t.color, borderRadius: '4px' }} />
-                </div>
-
-                <span className="tabular-nums" style={{ fontSize: '11.5px', fontWeight: 600, color: '#64748B', width: '22px', textAlign: 'right' }}>
-                  {t.count}
-                </span>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
@@ -540,7 +644,7 @@ export default function InsightsPage() {
               <p className="card-ref-subtitle">Overall sentiment from your conversations.</p>
             </div>
             <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
-              Last 30 days &or;
+              Feature Status
             </span>
           </div>
 
@@ -549,7 +653,7 @@ export default function InsightsPage() {
             <div style={{ position: 'relative', width: '110px', height: '110px' }}>
               <svg viewBox="0 0 36 36" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
                 <circle cx="18" cy="18" r="14" fill="none" stroke="#E2E8F0" strokeWidth="4" />
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#10B981" strokeWidth="4" strokeDasharray="82 18" strokeLinecap="round" />
+                <circle cx="18" cy="18" r="14" fill="none" stroke="#94A3B8" strokeWidth="4" strokeDasharray="0 100" strokeLinecap="round" />
               </svg>
               <div
                 style={{
@@ -560,29 +664,29 @@ export default function InsightsPage() {
                   textAlign: 'center',
                 }}
               >
-                <div style={{ fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: '18px', fontWeight: 800, color: '#0F172A', lineHeight: 1 }}>
-                  82%
+                <div style={{ fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: '18px', fontWeight: 800, color: '#94A3B8', lineHeight: 1 }}>
+                  --%
                 </div>
-                <div style={{ fontSize: '10.5px', color: '#10B981', fontWeight: 600, marginTop: '2px' }}>Positive</div>
+                <div style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 600, marginTop: '2px' }}>Inactive</div>
               </div>
             </div>
 
             {/* Breakdown */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10B981' }} />
-                <span style={{ color: '#475569', width: '60px' }}>Positive</span>
-                <span className="tabular-nums" style={{ fontWeight: 600, color: '#0F172A' }}>82%</span>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#CBD5E1' }} />
+                <span style={{ color: '#64748B', width: '60px' }}>Positive</span>
+                <span className="tabular-nums" style={{ fontWeight: 600, color: '#94A3B8' }}>--%</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#60A5FA' }} />
-                <span style={{ color: '#475569', width: '60px' }}>Neutral</span>
-                <span className="tabular-nums" style={{ fontWeight: 600, color: '#0F172A' }}>12%</span>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#CBD5E1' }} />
+                <span style={{ color: '#64748B', width: '60px' }}>Neutral</span>
+                <span className="tabular-nums" style={{ fontWeight: 600, color: '#94A3B8' }}>--%</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#F87171' }} />
-                <span style={{ color: '#475569', width: '60px' }}>Negative</span>
-                <span className="tabular-nums" style={{ fontWeight: 600, color: '#0F172A' }}>6%</span>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#CBD5E1' }} />
+                <span style={{ color: '#64748B', width: '60px' }}>Negative</span>
+                <span className="tabular-nums" style={{ fontWeight: 600, color: '#94A3B8' }}>--%</span>
               </div>
             </div>
           </div>
@@ -590,8 +694,8 @@ export default function InsightsPage() {
           {/* Sentiment Badge */}
           <div
             style={{
-              backgroundColor: '#F0FDF4',
-              border: '1px solid #DCFCE7',
+              backgroundColor: '#F8FAFC',
+              border: '1px solid #E2E8F0',
               borderRadius: '10px',
               padding: '10px 14px',
               display: 'flex',
@@ -599,9 +703,9 @@ export default function InsightsPage() {
               gap: '10px',
             }}
           >
-            <TrendingUp size={18} color="#16A34A" flexShrink={0} />
-            <div style={{ fontSize: '11.5px', color: '#166534', lineHeight: 1.4 }}>
-              <strong>Sentiment is 18% higher than last month.</strong> Your conversations are getting more positive!
+            <Lightbulb size={18} color="#64748B" flexShrink={0} />
+            <div style={{ fontSize: '11.5px', color: '#475569', lineHeight: 1.4 }}>
+              <strong>Sentiment model planned for recap v2.</strong> Currently, no sentiment scores are stored in your database.
             </div>
           </div>
         </div>
@@ -614,27 +718,31 @@ export default function InsightsPage() {
               <p className="card-ref-subtitle">People you meet with most.</p>
             </div>
             <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
-              Last 30 days &or;
+              Identified Speakers
             </span>
           </div>
 
           <div>
-            {collaborators.map((c) => (
-              <div key={c.name} className="collaborator-item">
-                <div className="collaborator-left">
-                  <div className="collaborator-avatar">
-                    {c.name[0].toUpperCase()}
+            {collaborators.length === 0 ? (
+              <div style={{ color: '#94A3B8', fontSize: '12.5px', padding: '16px 0' }}>No speaker turns identified yet</div>
+            ) : (
+              collaborators.map((c) => (
+                <div key={c.name} className="collaborator-item">
+                  <div className="collaborator-left">
+                    <div className="collaborator-avatar">
+                      {c.name[0].toUpperCase()}
+                    </div>
+                    <div className="collaborator-name">{c.name}</div>
                   </div>
-                  <div className="collaborator-name">{c.name}</div>
-                </div>
 
-                <div className="collaborator-count tabular-nums">{c.count} meetings</div>
+                  <div className="collaborator-count tabular-nums">{c.count} turns</div>
 
-                <div className="collaborator-bar-bg">
-                  <div className="collaborator-bar-fill" style={{ width: `${c.pct}%`, backgroundColor: c.color }} />
+                  <div className="collaborator-bar-bg">
+                    <div className="collaborator-bar-fill" style={{ width: `${c.pct}%`, backgroundColor: c.color }} />
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </section>

@@ -106,7 +106,7 @@ export default function DashboardPage() {
   }, [meetings]);
 
   const totalActionItemsCount = actionItems.length;
-  const peopleMetCount = uniqueSpeakers.length > 0 ? uniqueSpeakers.length : 3;
+  const peopleMetCount = uniqueSpeakers.length;
 
   // Real Upcoming Meetings
   const now = new Date();
@@ -148,18 +148,71 @@ export default function DashboardPage() {
     return `in ${diffHours} hrs`;
   };
 
-  // Topic distribution based on real meetings
-  const topics = useMemo(() => {
-    const defaultTopics = [
-      { name: 'Product Development', pct: 28, color: '#0066FF' },
-      { name: 'Client Updates', pct: 18, color: '#00A3FF' },
-      { name: 'Team Sync', pct: 15, color: '#8B5CF6' },
-      { name: 'Planning', pct: 12, color: '#EC4899' },
-      { name: 'Design', pct: 10, color: '#F97316' },
-      { name: 'Others', pct: 17, color: '#94A3B8' },
+  // Real Weekly Meeting Insights calculation (last 4 weeks)
+  const weeklyInsights = useMemo(() => {
+    const nowMs = Date.now();
+    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+    const weeks = [
+      { label: 'W1', meetings: 0, hours: 0 },
+      { label: 'W2', meetings: 0, hours: 0 },
+      { label: 'W3', meetings: 0, hours: 0 },
+      { label: 'W4', meetings: 0, hours: 0 },
     ];
-    return defaultTopics;
-  }, []);
+
+    meetings.forEach((m) => {
+      const mTime = new Date(m.scheduled_start).getTime();
+      const diffWeeks = Math.floor((nowMs - mTime) / oneWeekMs);
+      const idx = 3 - diffWeeks; // 3 = current week (W4), 2 = W3, 1 = W2, 0 = W1
+      if (idx >= 0 && idx < 4) {
+        weeks[idx].meetings += 1;
+        const durMins = m.expected_duration_minutes || (m.actual_duration_seconds ? Math.round(m.actual_duration_seconds / 60) : 30);
+        weeks[idx].hours += durMins / 60;
+      }
+    });
+
+    const maxMeetings = Math.max(...weeks.map((w) => w.meetings), 1);
+    const maxHours = Math.max(...weeks.map((w) => w.hours), 1);
+
+    return weeks.map((w) => ({
+      ...w,
+      meetingsH: w.meetings > 0 ? Math.max(Math.round((w.meetings / maxMeetings) * 100), 14) : 6,
+      hoursH: w.hours > 0 ? Math.max(Math.round((w.hours / maxHours) * 110), 14) : 6,
+      hoursFormatted: w.hours.toFixed(1),
+    }));
+  }, [meetings]);
+
+  // Topic distribution derived dynamically from real meeting titles
+  const topics = useMemo(() => {
+    if (meetings.length === 0) return [];
+    const topicCounts = {};
+    meetings.forEach((m) => {
+      const title = (m.title || '').toLowerCase();
+      let cat = 'General';
+      if (title.includes('marketing')) cat = 'Marketing';
+      else if (title.includes('standup') || title.includes('sync') || title.includes('team')) cat = 'Team Sync';
+      else if (title.includes('api') || title.includes('test')) cat = 'API & Integration';
+      else if (title.includes('product') || title.includes('review')) cat = 'Product Review';
+      else if (title.includes('cancel')) cat = 'Ad-hoc Calls';
+
+      topicCounts[cat] = (topicCounts[cat] || 0) + 1;
+    });
+
+    const colors = {
+      'Marketing': '#EC4899',
+      'Team Sync': '#8B5CF6',
+      'API & Integration': '#0066FF',
+      'Product Review': '#00A3FF',
+      'Ad-hoc Calls': '#F97316',
+      'General': '#94A3B8',
+    };
+
+    return Object.entries(topicCounts).map(([name, count]) => ({
+      name,
+      count,
+      pct: Math.round((count / meetings.length) * 100),
+      color: colors[name] || '#64748B',
+    })).sort((a, b) => b.count - a.count);
+  }, [meetings]);
 
   return (
     <div>
@@ -286,9 +339,9 @@ export default function DashboardPage() {
             <div className="metric-label">Total Meetings</div>
             <div className="metric-value-row">
               <span className="metric-value tabular-nums">{totalMeetingsCount}</span>
-              <span className="metric-trend tabular-nums">&uarr; 12%</span>
+              <span className="metric-trend tabular-nums" style={{ color: '#0066FF', backgroundColor: '#EFF6FF' }}>All time</span>
             </div>
-            <div className="metric-trend-sub">vs last month</div>
+            <div className="metric-trend-sub">Total recorded in recap</div>
           </div>
         </div>
 
@@ -301,9 +354,9 @@ export default function DashboardPage() {
             <div className="metric-label">Hours Recorded</div>
             <div className="metric-value-row">
               <span className="metric-value tabular-nums">{totalHoursRecorded}</span>
-              <span className="metric-trend tabular-nums">&uarr; 28%</span>
+              <span className="metric-trend tabular-nums" style={{ color: '#0066FF', backgroundColor: '#EFF6FF' }}>Total</span>
             </div>
-            <div className="metric-trend-sub">vs last month</div>
+            <div className="metric-trend-sub">Across all meetings</div>
           </div>
         </div>
 
@@ -316,9 +369,9 @@ export default function DashboardPage() {
             <div className="metric-label">Action Items</div>
             <div className="metric-value-row">
               <span className="metric-value tabular-nums">{totalActionItemsCount}</span>
-              <span className="metric-trend tabular-nums">&uarr; 35%</span>
+              <span className="metric-trend tabular-nums" style={{ color: '#16A34A', backgroundColor: '#F0FDF4' }}>Extracted</span>
             </div>
-            <div className="metric-trend-sub">vs last month</div>
+            <div className="metric-trend-sub">From meeting MOMs</div>
           </div>
         </div>
 
@@ -331,9 +384,9 @@ export default function DashboardPage() {
             <div className="metric-label">People Met</div>
             <div className="metric-value-row">
               <span className="metric-value tabular-nums">{peopleMetCount}</span>
-              <span className="metric-trend tabular-nums">&uarr; 8%</span>
+              <span className="metric-trend tabular-nums" style={{ color: '#7C3AED', backgroundColor: '#F5F3FF' }}>Speakers</span>
             </div>
-            <div className="metric-trend-sub">vs last month</div>
+            <div className="metric-trend-sub">Distinct diarized speakers</div>
           </div>
         </div>
       </section>
@@ -370,9 +423,6 @@ export default function DashboardPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <div className="upcoming-avatars">
                         <div className="upcoming-avatar">H</div>
-                        <div className="upcoming-avatar" style={{ backgroundColor: '#10B981' }}>M</div>
-                        <div className="upcoming-avatar" style={{ backgroundColor: '#8B5CF6' }}>S</div>
-                        <span className="upcoming-avatar-more">+3</span>
                       </div>
                     </div>
                   </div>
@@ -434,7 +484,7 @@ export default function DashboardPage() {
               </div>
               <div>
                 <h2 className="card-ref-title">Today&apos;s Focus</h2>
-                <p className="card-ref-subtitle">Suggested by recap based on your schedule.</p>
+                <p className="card-ref-subtitle">Action items extracted by recap from your meetings.</p>
               </div>
             </div>
           </div>
@@ -465,38 +515,8 @@ export default function DashboardPage() {
                 );
               })
             ) : (
-              <div>
-                <div
-                  className={`focus-item ${completedTasks.has('default-1') ? 'completed' : ''}`}
-                  onClick={() => toggleTask('default-1')}
-                >
-                  <div className="focus-item-left">
-                    <div className={`focus-checkbox ${completedTasks.has('default-1') ? 'checked' : ''}`}>
-                      {completedTasks.has('default-1') && <Check size={12} strokeWidth={3} />}
-                    </div>
-                    <div>
-                      <div className="focus-item-title">Prepare for Product Review</div>
-                      <div className="focus-item-subtitle">Review last meeting summary</div>
-                    </div>
-                  </div>
-                  <ChevronRight size={16} color="#94A3B8" />
-                </div>
-
-                <div
-                  className={`focus-item ${completedTasks.has('default-2') ? 'completed' : ''}`}
-                  onClick={() => toggleTask('default-2')}
-                >
-                  <div className="focus-item-left">
-                    <div className={`focus-checkbox ${completedTasks.has('default-2') ? 'checked' : ''}`}>
-                      {completedTasks.has('default-2') && <Check size={12} strokeWidth={3} />}
-                    </div>
-                    <div>
-                      <div className="focus-item-title">Follow up on pending action items</div>
-                      <div className="focus-item-subtitle">3 items pending</div>
-                    </div>
-                  </div>
-                  <ChevronRight size={16} color="#94A3B8" />
-                </div>
+              <div style={{ textAlign: 'center', padding: '32px 16px', color: '#64748B', fontSize: '13px' }}>
+                No pending action items. Tasks extracted from your completed meetings will appear here.
               </div>
             )}
           </div>
@@ -548,19 +568,19 @@ export default function DashboardPage() {
           <div className="card-ref-header">
             <h3 className="card-ref-title">Meeting Insights</h3>
             <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
-              Past 30 days &or;
+              Past 4 weeks
             </span>
           </div>
 
           {/* Bar Chart with Dual Bars (Meetings & Hours) */}
           <div className="insights-chart-wrap">
-            {/* Tooltip for W3 */}
-            {activeTooltip === 2 && (
+            {/* Real Tooltip for hovered week */}
+            {activeTooltip !== null && weeklyInsights[activeTooltip] && (
               <div
                 style={{
                   position: 'absolute',
                   top: '10px',
-                  left: '60%',
+                  left: `${20 + activeTooltip * 22}%`,
                   transform: 'translateX(-50%)',
                   backgroundColor: '#FFFFFF',
                   border: '1px solid #E2E8F0',
@@ -574,17 +594,14 @@ export default function DashboardPage() {
                   textAlign: 'center',
                 }}
               >
-                <div>8 meetings</div>
-                <div style={{ color: '#64748B', fontSize: '10.5px', fontWeight: 500 }}>6.2 hours</div>
+                <div>{weeklyInsights[activeTooltip].meetings} meetings</div>
+                <div style={{ color: '#64748B', fontSize: '10.5px', fontWeight: 500 }}>
+                  {weeklyInsights[activeTooltip].hoursFormatted} hours
+                </div>
               </div>
             )}
 
-            {[
-              { label: 'W1', meetingsH: 45, hoursH: 70 },
-              { label: 'W2', meetingsH: 60, hoursH: 90 },
-              { label: 'W3', meetingsH: 95, hoursH: 110 },
-              { label: 'W4', meetingsH: 65, hoursH: 85 },
-            ].map((col, idx) => (
+            {weeklyInsights.map((col, idx) => (
               <div
                 key={col.label}
                 className="insights-week-col"
@@ -624,28 +641,34 @@ export default function DashboardPage() {
           <div className="card-ref-header">
             <h3 className="card-ref-title">Top Topics</h3>
             <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500, backgroundColor: '#F8FAFC', border: '1px solid #EDF2F7', padding: '3px 8px', borderRadius: '6px' }}>
-              Past 30 days &or;
+              From meetings
             </span>
           </div>
 
           <div>
-            {topics.map((t) => (
-              <div key={t.name} className="topic-row">
-                <div className="topic-info">
-                  <div className="topic-name">
-                    <span className="topic-dot" style={{ backgroundColor: t.color }} />
-                    <span>{t.name}</span>
+            {topics.length > 0 ? (
+              topics.map((t) => (
+                <div key={t.name} className="topic-row">
+                  <div className="topic-info">
+                    <div className="topic-name">
+                      <span className="topic-dot" style={{ backgroundColor: t.color }} />
+                      <span>{t.name}</span>
+                    </div>
+                    <span className="topic-pct tabular-nums">{t.pct}%</span>
                   </div>
-                  <span className="topic-pct tabular-nums">{t.pct}%</span>
+                  <div className="topic-progress-bg">
+                    <div
+                      className="topic-progress-fill"
+                      style={{ width: `${t.pct}%`, backgroundColor: t.color }}
+                    />
+                  </div>
                 </div>
-                <div className="topic-progress-bg">
-                  <div
-                    className="topic-progress-fill"
-                    style={{ width: `${t.pct}%`, backgroundColor: t.color }}
-                  />
-                </div>
+              ))
+            ) : (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: '#94A3B8', fontSize: '13px' }}>
+                No meetings recorded yet.
               </div>
-            ))}
+            )}
           </div>
         </div>
       </section>

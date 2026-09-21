@@ -414,7 +414,7 @@ export default function CalendarPage() {
                   </svg>
                 </div>
                 <div className="integration-name">Google Calendar</div>
-                <span className="integration-status-connected">● Connected</span>
+                <button type="button" className="integration-link-connect">Connect</button>
               </div>
 
               {/* Outlook */}
