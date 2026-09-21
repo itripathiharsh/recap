@@ -1,0 +1,8 @@
+{
+  "rules": [
+    {
+      "type": "calendar_attendee",
+      "description": "Auto-join any Meet event on the owner's calendar where they are an attendee"
+    }
+  ]
+}

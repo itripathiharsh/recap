@@ -1,0 +1,5 @@
+{
+  "meeting_id": "sample-meeting-002-silent-diarization",
+  "model": "pyannote/speaker-diarization-3.1",
+  "speaker_turns": []
+}

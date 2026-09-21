@@ -1,0 +1,45 @@
+# systemd/meeting-recorder.service
+#
+# Installation:
+#   sudo cp systemd/meeting-recorder.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable meeting-recorder.service   # start on boot
+#   sudo systemctl start meeting-recorder.service    # start now
+#
+# Check status / logs:
+#   sudo systemctl status meeting-recorder.service
+#   journalctl -u meeting-recorder.service -f
+#
+# This is what closes the "scheduler crashes silently at 2am" blind spot
+# documented in RISKS.md Section 4 — Restart=always plus a RestartSec ensures the
+# scheduler comes back up on its own without a human noticing it went down first.
+
+[Unit]
+Description=Meeting Recorder Agent Scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/meeting-recorder
+EnvironmentFile=/home/ubuntu/meeting-recorder/.env
+ExecStart=/home/ubuntu/meeting-recorder/.venv/bin/python /home/ubuntu/meeting-recorder/src/scheduler.py
+Restart=always
+RestartSec=15
+
+# If the scheduler crash-loops (e.g., bad credentials causing immediate exit
+# every time), don't let it spin forever silently — cap total restart attempts
+# in a time window so a persistent failure surfaces instead of hiding in an
+# infinite restart loop.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+# Logs go to the systemd journal by default (see `journalctl` command above),
+# in addition to the per-meeting logs already written to logs/{meeting_id}.log
+# by the application itself per ARCHITECTURE.md.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

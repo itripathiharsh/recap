@@ -1,0 +1,16 @@
+{
+  "meeting_id": "sample-meeting-001",
+  "model": "faster-whisper-small-int8",
+  "language": "en",
+  "segments": [
+    { "start": 0.0, "end": 4.2, "text": "Okay let's get started with the weekly sync." },
+    { "start": 4.5, "end": 9.8, "text": "So this week we finished the login page redesign, it's ready for review." },
+    { "start": 10.1, "end": 15.3, "text": "Great, I'll take a look today and give feedback by tomorrow." },
+    { "start": 15.6, "end": 22.0, "text": "Also we need to decide on the deployment date, are we still targeting Friday?" },
+    { "start": 22.3, "end": 27.9, "text": "Let's push it to Monday instead, I want more testing time before the weekend." },
+    { "start": 28.2, "end": 30.5, "text": "Sounds good, Monday it is." },
+    { "start": 30.8, "end": 38.0, "text": "One open question - do we know if the client has approved the new pricing yet?" },
+    { "start": 38.3, "end": 41.0, "text": "Not yet, I'll follow up with them and update everyone." },
+    { "start": 41.3, "end": 44.0, "text": "Perfect, thanks everyone, that's all for today." }
+  ]
+}

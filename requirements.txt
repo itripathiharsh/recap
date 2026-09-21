@@ -1,0 +1,59 @@
+# requirements.txt
+#
+# Versions pinned deliberately — do NOT run `pip install --upgrade` on this file
+# casually. pyannote.audio + torch on ARM64 (Oracle Ampere) is a known source of
+# wheel-build failures when versions drift out of sync. If a version genuinely
+# needs bumping, test it in isolation on the actual ARM VM before committing the
+# change, and update this comment with the date/reason.
+#
+# Last verified against: Ubuntu 24.04 LTS, aarch64, Python 3.11.
+
+# --- Browser automation ---
+playwright==1.48.0
+
+# --- Audio/STT ---
+faster-whisper==1.0.3
+ctranslate2==4.4.0          # backend faster-whisper depends on; pin explicitly,
+                             # ARM64 wheel availability for this has been inconsistent
+                             # across releases — verify a prebuilt aarch64 wheel exists
+                             # for this exact version before install, or budget time
+                             # to build from source.
+
+# --- Diarization ---
+pyannote.audio==3.3.2
+torch==2.4.1                # CPU-only build required — see install note below
+torchaudio==2.4.1
+
+# --- LLM API clients ---
+groq==0.11.0
+google-generativeai==0.8.3
+
+# --- Google APIs (Calendar + Gmail) ---
+google-api-python-client==2.149.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.1
+
+# --- Config / env ---
+python-dotenv==1.0.1
+pydantic==2.9.2              # used for schema validation against SCHEMA.md shapes
+
+# --- Dev tooling (see AGENT.md Section 4) ---
+pytest==8.3.3
+black==24.10.0
+ruff==0.7.1
+mypy==1.13.0
+
+# =============================================================================
+# ARM64 INSTALL NOTE (read before running pip install):
+#
+# torch must be installed as the CPU-only build, not a CUDA build (there is no
+# GPU on this box). On ARM64, use:
+#
+#   pip install torch==2.4.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+#
+# If that index does not publish an aarch64 wheel for this exact version at
+# install time, check https://download.pytorch.org/whl/torch/ for the closest
+# available aarch64+cpu build and update this file's pin to match — do not
+# silently install a different version without updating this comment and
+# ARCHITECTURE.md's tech stack table.
+# =============================================================================

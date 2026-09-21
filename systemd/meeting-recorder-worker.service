@@ -1,0 +1,20 @@
+[Unit]
+Description=Meeting Recorder Worker Daemon
+After=network.target sound.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/meet-recorder
+EnvironmentFile=/home/ubuntu/meet-recorder/.env
+Environment="PULSE_SERVER=unix:/run/user/1000/pulse/native"
+Environment="DISPLAY=:99"
+ExecStartPre=/bin/sh -c 'pgrep -x Xvfb > /dev/null || Xvfb :99 -screen 0 1920x1080x24 &'
+ExecStart=/home/ubuntu/meet-recorder/.venv/bin/python3 -m src.scheduler
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

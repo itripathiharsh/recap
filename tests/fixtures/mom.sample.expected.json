@@ -1,0 +1,14 @@
+{
+  "meeting_id": "sample-meeting-001",
+  "summary": "The team reviewed progress on the login page redesign and discussed the deployment timeline. They also raised an open question about client approval on pricing.",
+  "decisions": [
+    "Deployment date moved from Friday to Monday to allow more testing time."
+  ],
+  "action_items": [
+    { "task": "Review the login page redesign and give feedback", "owner": "unassigned", "due": "tomorrow" },
+    { "task": "Follow up with the client on pricing approval and update the team", "owner": "unassigned", "due": "not specified" }
+  ],
+  "open_questions": [
+    "Has the client approved the new pricing yet?"
+  ]
+}

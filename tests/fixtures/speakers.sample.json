@@ -1,0 +1,14 @@
+{
+  "meeting_id": "sample-meeting-001",
+  "model": "pyannote/speaker-diarization-3.1",
+  "speaker_turns": [
+    { "start": 0.0, "end": 9.8, "speaker": "SPEAKER_00" },
+    { "start": 10.1, "end": 15.3, "speaker": "SPEAKER_01" },
+    { "start": 15.6, "end": 22.0, "speaker": "SPEAKER_00" },
+    { "start": 22.3, "end": 27.9, "speaker": "SPEAKER_01" },
+    { "start": 28.2, "end": 30.5, "speaker": "SPEAKER_00" },
+    { "start": 30.8, "end": 38.0, "speaker": "SPEAKER_02" },
+    { "start": 38.3, "end": 41.0, "speaker": "SPEAKER_01" },
+    { "start": 41.3, "end": 44.0, "speaker": "SPEAKER_00" }
+  ]
+}

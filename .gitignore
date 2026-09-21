@@ -1,0 +1,72 @@
+# --- Secrets — NEVER commit these ---
+.env
+*.env
+.env.local
+*.local
+token.json
+credentials/
+credentials.json
+*credentials*.json
+!*credentials*.example.json
+*storage_state*.json
+config/allowlist.json
+!config/allowlist.json.example
+
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+.temp/
+*.log
+
+# --- Scratch & Test Scratch Scripts ---
+scratch/
+
+# --- Generated Data ---
+data/recordings/
+data/jobs/
+logs/
+!data/recordings/.gitkeep
+!data/jobs/.gitkeep
+!logs/.gitkeep
+
+# --- Models & Weights ---
+*.bin
+*.pt
+*.onnx
+models/
+
+# --- Node / Frontend ---
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+node_modules/
+.next/
+out/
+
+# --- Internal / Temporary Planning Docs & Scratch ---
+docs/
+AGENT.md
+API_SPECS.md
+ARCHITECTURE.md
+RISKS.md
+SCHEMA.md
+SPEC.md
+TASK.md
+SETUP.md
+D/
+=0.115.0
+=0.27.0
+=0.30.0
+=2.8.0
+
+# --- OS / Editor ---
+.DS_Store
+.vscode/
+.idea/
+*.swp
