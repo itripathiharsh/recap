@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import {
@@ -37,13 +37,30 @@ import {
   Radio,
   ExternalLink,
 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 export default function LandingPage() {
+  const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState('features'); // 'features' | 'how-it-works' | 'pricing' | 'security' | 'faq'
   const [billingPeriod, setBillingPeriod] = useState('monthly'); // 'monthly' | 'yearly'
   const [faqCategory, setFaqCategory] = useState('all');
   const [faqSearch, setFaqSearch] = useState('');
   const [expandedFaq, setExpandedFaq] = useState({});
+
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        const { data } = await supabase.auth.getSession();
+        setSession(data?.session || null);
+      } catch (e) {
+        console.error('Landing page auth check error:', e);
+      }
+    }
+    checkAuth();
+  }, []);
+
+  const authTarget = session ? '/dashboard' : '/login';
+  const signupTarget = session ? '/dashboard' : '/login?mode=signup';
 
   const toggleFaq = (id) => {
     setExpandedFaq((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -222,7 +239,7 @@ export default function LandingPage() {
           {/* Right CTAs */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <Link
-              href="/dashboard"
+              href={authTarget}
               style={{
                 fontSize: '14px',
                 fontWeight: 600,
@@ -230,11 +247,11 @@ export default function LandingPage() {
                 transition: 'color 120ms ease',
               }}
             >
-              Sign in
+              {session ? 'Console' : 'Sign in'}
             </Link>
 
-            <Link href="/dashboard" className="landing-btn-primary">
-              <span>Get Started</span>
+            <Link href={signupTarget} className="landing-btn-primary">
+              <span>{session ? 'Open Dashboard' : 'Get Started'}</span>
             </Link>
           </div>
         </div>
@@ -281,12 +298,12 @@ export default function LandingPage() {
                 </p>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap', marginBottom: '32px' }}>
-                  <Link href="/dashboard" className="landing-btn-primary" style={{ padding: '12px 26px', fontSize: '15px' }}>
-                    <span>Get Started Free</span>
+                  <Link href={signupTarget} className="landing-btn-primary" style={{ padding: '12px 26px', fontSize: '15px' }}>
+                    <span>{session ? 'Open Dashboard' : 'Get Started Free'}</span>
                     <ArrowRight size={15} aria-hidden="true" />
                   </Link>
 
-                  <Link href="/dashboard" className="landing-btn-secondary" style={{ padding: '12px 22px', fontSize: '15px' }}>
+                  <Link href={authTarget} className="landing-btn-secondary" style={{ padding: '12px 22px', fontSize: '15px' }}>
                     <div
                       style={{
                         width: '20px',
@@ -300,7 +317,7 @@ export default function LandingPage() {
                     >
                       <Play size={10} color="#0066FF" style={{ marginLeft: '1px' }} />
                     </div>
-                    <span>Watch Demo</span>
+                    <span>Launch Console</span>
                   </Link>
                 </div>
 
@@ -589,12 +606,12 @@ export default function LandingPage() {
               </p>
 
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '14px', flexWrap: 'wrap', marginBottom: '24px' }}>
-                <Link href="/dashboard" className="landing-btn-primary" style={{ padding: '12px 28px', fontSize: '15px' }}>
-                  <span>Get Started Free</span>
+                <Link href={signupTarget} className="landing-btn-primary" style={{ padding: '12px 28px', fontSize: '15px' }}>
+                  <span>{session ? 'Open Dashboard' : 'Get Started Free'}</span>
                   <ArrowRight size={15} aria-hidden="true" />
                 </Link>
-                <Link href="/dashboard" className="landing-btn-secondary" style={{ padding: '12px 22px', fontSize: '15px' }}>
-                  <span>Watch Demo</span>
+                <Link href={authTarget} className="landing-btn-secondary" style={{ padding: '12px 22px', fontSize: '15px' }}>
+                  <span>Launch Console</span>
                 </Link>
               </div>
 
@@ -915,7 +932,7 @@ export default function LandingPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={16} color="#10B981" /> <span>Google Meet integration</span></div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={16} color="#10B981" /> <span>Standard support</span></div>
               </div>
-              <Link href="/dashboard" className="landing-btn-secondary" style={{ width: '100%' }}>
+              <Link href={signupTarget} className="landing-btn-secondary" style={{ width: '100%' }}>
                 Get Started
               </Link>
             </div>
@@ -962,7 +979,7 @@ export default function LandingPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={16} color="#10B981" /> <span>Calendar integration</span></div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={16} color="#10B981" /> <span>Priority support</span></div>
               </div>
-              <Link href="/dashboard" className="landing-btn-primary" style={{ width: '100%' }}>
+              <Link href={signupTarget} className="landing-btn-primary" style={{ width: '100%' }}>
                 Get Started
               </Link>
             </div>
@@ -986,7 +1003,7 @@ export default function LandingPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={16} color="#10B981" /> <span>SSO (coming soon)</span></div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={16} color="#10B981" /> <span>Dedicated support</span></div>
               </div>
-              <Link href="/dashboard" className="landing-btn-secondary" style={{ width: '100%' }}>
+              <Link href={signupTarget} className="landing-btn-secondary" style={{ width: '100%' }}>
                 Contact Sales
               </Link>
             </div>
@@ -1334,7 +1351,7 @@ export default function LandingPage() {
                 Can't find the answer you're looking for? Our team is happy to assist you.
               </p>
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <Link href="/dashboard" className="landing-btn-primary">
+                <Link href={authTarget} className="landing-btn-primary">
                   <span>Contact Support</span>
                   <ArrowRight size={14} />
                 </Link>
@@ -1392,7 +1409,7 @@ export default function LandingPage() {
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               <span style={{ fontSize: '12px', color: '#94A3B8' }}>Google Meet Native • Free-Tier Cloud Pipeline</span>
-              <Link href="/dashboard" className="landing-btn-primary" style={{ padding: '8px 18px', fontSize: '13px' }}>
+              <Link href={authTarget} className="landing-btn-primary" style={{ padding: '8px 18px', fontSize: '13px' }}>
                 <span>Launch Console</span>
                 <ArrowRight size={13} />
               </Link>

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   CalendarDays,
@@ -10,16 +10,17 @@ import {
   BookOpen,
   Lightbulb,
   Settings,
-  MoreVertical,
+  LogOut,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
-export default function Navigation() {
+export default function Navigation({ session }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [meetingCount, setMeetingCount] = useState(null);
   const [userProfile, setUserProfile] = useState({
-    name: 'Harsh Vardhan Tripathi',
-    email: 'harsh@sentio.in',
+    name: session?.user?.user_metadata?.name || 'Harsh Vardhan Tripathi',
+    email: session?.user?.email || 'harsh@sentio.in',
   });
 
   useEffect(() => {
@@ -33,7 +34,7 @@ export default function Navigation() {
         const { data: userData } = await supabase
           .from('User')
           .select('name, email')
-          .eq('email', 'harsh@sentio.in')
+          .eq('email', session?.user?.email || 'harsh@sentio.in')
           .limit(1);
 
         if (userData && userData.length > 0) {
@@ -50,7 +51,16 @@ export default function Navigation() {
     checkData();
     const interval = setInterval(checkData, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [session]);
+
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+      router.push('/login');
+    } catch (err) {
+      console.error('Sign out error:', err);
+    }
+  };
 
   const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -101,7 +111,7 @@ export default function Navigation() {
         })}
       </nav>
 
-      {/* Bottom Section: User Profile */}
+      {/* Bottom Section: User Profile & Sign Out */}
       <div className="sidebar-footer">
         {/* User Profile Lockup */}
         <div className="sidebar-user">
@@ -112,11 +122,19 @@ export default function Navigation() {
             <div className="sidebar-user-name">{userProfile.name}</div>
             <div className="sidebar-user-email">{userProfile.email}</div>
           </div>
-          <button type="button" className="sidebar-user-more" aria-label="More user options">
-            <MoreVertical size={16} color="#94A3B8" />
+          <button
+            type="button"
+            className="sidebar-user-more"
+            onClick={handleSignOut}
+            title="Sign Out"
+            aria-label="Sign Out"
+            style={{ cursor: 'pointer' }}
+          >
+            <LogOut size={16} color="#94A3B8" />
           </button>
         </div>
       </div>
     </aside>
   );
 }
+
