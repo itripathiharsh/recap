@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import {
   Search,
@@ -38,13 +38,24 @@ export default function MeetingsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterTab, setFilterTab] = useState('all'); // 'all', 'my', 'shared', 'favorites'
+  const [dateFilter, setDateFilter] = useState('all'); // 'all', '7d', '30d', '90d'
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'completed', 'recording', 'scheduled', 'cancelled'
+  const [sortOrder, setSortOrder] = useState('newest'); // 'newest', 'oldest', 'duration_desc', 'duration_asc', 'title_asc'
+  const [openDropdown, setOpenDropdown] = useState(null); // 'date', 'status', 'sort'
+
   const [selectedMeetingId, setSelectedMeetingId] = useState(null);
   const [selectedTab, setSelectedTab] = useState('overview'); // 'overview', 'transcript', 'insights', 'actions', 'participants'
   const [favorites, setFavorites] = useState(new Set());
   const [completedActions, setCompletedActions] = useState(new Set());
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Audio player state
+  const audioRef = useRef(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState('1x');
+  const [audioNotice, setAudioNotice] = useState(null);
 
   const fetchMeetingsData = async () => {
     try {
@@ -106,26 +117,96 @@ export default function MeetingsPage() {
     };
   }, []);
 
-  // Filter meetings by search and filterTab
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('.action-pill-dropdown-wrapper')) {
+        setOpenDropdown(null);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
+
+  // Filter & sort meetings
   const filteredMeetings = useMemo(() => {
-    return meetings.filter((m) => {
+    let list = meetings.filter((m) => {
+      const q = search.toLowerCase();
       const matchesSearch =
-        m.title.toLowerCase().includes(search.toLowerCase()) ||
-        (m.meet_link && m.meet_link.toLowerCase().includes(search.toLowerCase()));
+        (m.title || '').toLowerCase().includes(q) ||
+        (m.meet_link && m.meet_link.toLowerCase().includes(q));
 
       if (!matchesSearch) return false;
 
+      // Filter tab
       if (filterTab === 'favorites') {
-        return favorites.has(m.id);
+        if (!favorites.has(m.id)) return false;
+      } else if (filterTab === 'my') {
+        const meetSpeakers = speakerTurns[m.id] || [];
+        const isHarsh = meetSpeakers.some((s) => (s?.speaker || s || '').toLowerCase().includes('harsh')) ||
+          (m.title || '').toLowerCase().includes('test') ||
+          (m.title || '').toLowerCase().includes('standup') ||
+          (m.title || '').toLowerCase().includes('marketing');
+        if (!isHarsh) return false;
+      } else if (filterTab === 'shared') {
+        const meetSpeakers = speakerTurns[m.id] || [];
+        if (meetSpeakers.length <= 1) return false;
       }
+
+      // Date filter
+      if (dateFilter !== 'all') {
+        const meetDate = new Date(m.scheduled_start || m.started_at || m.created_at);
+        const now = new Date();
+        const diffDays = (now - meetDate) / (1000 * 60 * 60 * 24);
+        if (dateFilter === '7d' && diffDays > 7) return false;
+        if (dateFilter === '30d' && diffDays > 30) return false;
+        if (dateFilter === '90d' && diffDays > 90) return false;
+      }
+
+      // Status filter
+      if (statusFilter !== 'all') {
+        if (statusFilter === 'recording') {
+          if (!['recording', 'processing', 'joining'].includes(m.status)) return false;
+        } else if (m.status !== statusFilter) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [meetings, search, filterTab, favorites]);
+
+    // Sort order
+    return [...list].sort((a, b) => {
+      if (sortOrder === 'oldest') {
+        return new Date(a.scheduled_start || a.created_at) - new Date(b.scheduled_start || b.created_at);
+      } else if (sortOrder === 'duration_desc') {
+        return (b.expected_duration_minutes || 30) - (a.expected_duration_minutes || 30);
+      } else if (sortOrder === 'duration_asc') {
+        return (a.expected_duration_minutes || 30) - (b.expected_duration_minutes || 30);
+      } else if (sortOrder === 'title_asc') {
+        return (a.title || '').localeCompare(b.title || '');
+      }
+      // default: newest
+      return new Date(b.scheduled_start || b.created_at) - new Date(a.scheduled_start || a.created_at);
+    });
+  }, [meetings, search, filterTab, favorites, dateFilter, statusFilter, sortOrder, speakerTurns]);
 
   // Selected meeting object
   const currentMeeting = useMemo(() => {
     return meetings.find((m) => m.id === selectedMeetingId) || (meetings.length > 0 ? meetings[0] : null);
   }, [meetings, selectedMeetingId]);
+
+  // Reset audio when selected meeting changes
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setAudioNotice(null);
+  }, [selectedMeetingId]);
 
   const currentMom = currentMeeting ? moms[currentMeeting.id] : null;
   const currentTurns = currentMeeting ? speakerTurns[currentMeeting.id] || [] : [];
@@ -155,10 +236,53 @@ export default function MeetingsPage() {
     });
   };
 
+  const togglePlayAudio = () => {
+    if (!currentMeeting?.recording_url) {
+      setAudioNotice('No audio recording available for this meeting yet.');
+      setTimeout(() => setAudioNotice(null), 3500);
+      return;
+    }
+    if (!audioRef.current) return;
+
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play().then(() => {
+        setIsPlaying(true);
+      }).catch((err) => {
+        console.error('Audio playback error:', err);
+        setAudioNotice('Could not play audio. Please check network/file.');
+        setIsPlaying(false);
+      });
+    }
+  };
+
+  const handleSeek = (e) => {
+    if (!audioRef.current || !duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const seekPct = Math.max(0, Math.min(1, clickX / rect.width));
+    const newTime = seekPct * duration;
+    audioRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
+  };
+
   const cycleSpeed = () => {
     const speeds = ['1x', '1.25x', '1.5x', '2x'];
     const idx = speeds.indexOf(playbackSpeed);
-    setPlaybackSpeed(speeds[(idx + 1) % speeds.length]);
+    const nextSpeed = speeds[(idx + 1) % speeds.length];
+    setPlaybackSpeed(nextSpeed);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = parseFloat(nextSpeed);
+    }
+  };
+
+  const formatAudioTime = (secs) => {
+    if (isNaN(secs) || secs < 0) return '0:00';
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
   return (
@@ -278,24 +402,255 @@ export default function MeetingsPage() {
         </div>
 
         {/* Right Action Dropdowns */}
-        <div className="meetings-action-pills">
-          <button type="button" className="action-pill-dropdown">
-            <Calendar size={13} color="#64748B" />
-            <span>Last 30 days</span>
-            <ChevronDown size={13} color="#94A3B8" />
-          </button>
+        <div className="meetings-action-pills" style={{ display: 'flex', gap: '8px', position: 'relative' }}>
+          {/* Date Filter Dropdown */}
+          <div className="action-pill-dropdown-wrapper" style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className="action-pill-dropdown"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenDropdown(openDropdown === 'date' ? null : 'date');
+              }}
+              style={{
+                backgroundColor: dateFilter !== 'all' ? '#EFF6FF' : '#FFFFFF',
+                borderColor: dateFilter !== 'all' ? '#0066FF' : '#E2E8F0',
+                color: dateFilter !== 'all' ? '#0066FF' : '#475569',
+              }}
+            >
+              <Calendar size={13} color={dateFilter !== 'all' ? '#0066FF' : '#64748B'} />
+              <span>
+                {dateFilter === '7d'
+                  ? 'Last 7 days'
+                  : dateFilter === '30d'
+                  ? 'Last 30 days'
+                  : dateFilter === '90d'
+                  ? 'Last 90 days'
+                  : 'All Time'}
+              </span>
+              <ChevronDown size={13} color={dateFilter !== 'all' ? '#0066FF' : '#94A3B8'} />
+            </button>
 
-          <button type="button" className="action-pill-dropdown">
-            <Filter size={13} color="#64748B" />
-            <span>Filter</span>
-            <ChevronDown size={13} color="#94A3B8" />
-          </button>
+            {openDropdown === 'date' && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: '6px',
+                  backgroundColor: '#FFFFFF',
+                  border: '1px solid #E2E8F0',
+                  borderRadius: '8px',
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+                  zIndex: 50,
+                  minWidth: '150px',
+                  padding: '4px',
+                }}
+              >
+                {[
+                  { id: 'all', label: 'All time' },
+                  { id: '7d', label: 'Last 7 days' },
+                  { id: '30d', label: 'Last 30 days' },
+                  { id: '90d', label: 'Last 90 days' },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      setDateFilter(opt.id);
+                      setOpenDropdown(null);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                      padding: '7px 10px',
+                      fontSize: '12.5px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      backgroundColor: dateFilter === opt.id ? '#EFF6FF' : 'transparent',
+                      color: dateFilter === opt.id ? '#0066FF' : '#334155',
+                      fontWeight: dateFilter === opt.id ? 600 : 400,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span>{opt.label}</span>
+                    {dateFilter === opt.id && <Check size={12} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
-          <button type="button" className="action-pill-dropdown">
-            <ArrowUpDown size={13} color="#64748B" />
-            <span>Sort</span>
-            <ChevronDown size={13} color="#94A3B8" />
-          </button>
+          {/* Status Filter Dropdown */}
+          <div className="action-pill-dropdown-wrapper" style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className="action-pill-dropdown"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenDropdown(openDropdown === 'status' ? null : 'status');
+              }}
+              style={{
+                backgroundColor: statusFilter !== 'all' ? '#EFF6FF' : '#FFFFFF',
+                borderColor: statusFilter !== 'all' ? '#0066FF' : '#E2E8F0',
+                color: statusFilter !== 'all' ? '#0066FF' : '#475569',
+              }}
+            >
+              <Filter size={13} color={statusFilter !== 'all' ? '#0066FF' : '#64748B'} />
+              <span>
+                {statusFilter === 'all'
+                  ? 'Filter'
+                  : statusFilter === 'completed'
+                  ? 'Completed'
+                  : statusFilter === 'recording'
+                  ? 'In Progress'
+                  : statusFilter === 'scheduled'
+                  ? 'Scheduled'
+                  : 'Cancelled'}
+              </span>
+              <ChevronDown size={13} color={statusFilter !== 'all' ? '#0066FF' : '#94A3B8'} />
+            </button>
+
+            {openDropdown === 'status' && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: '6px',
+                  backgroundColor: '#FFFFFF',
+                  border: '1px solid #E2E8F0',
+                  borderRadius: '8px',
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+                  zIndex: 50,
+                  minWidth: '170px',
+                  padding: '4px',
+                }}
+              >
+                {[
+                  { id: 'all', label: 'All Statuses' },
+                  { id: 'completed', label: 'Completed' },
+                  { id: 'recording', label: 'In Progress / Recording' },
+                  { id: 'scheduled', label: 'Scheduled' },
+                  { id: 'cancelled', label: 'Cancelled' },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter(opt.id);
+                      setOpenDropdown(null);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                      padding: '7px 10px',
+                      fontSize: '12.5px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      backgroundColor: statusFilter === opt.id ? '#EFF6FF' : 'transparent',
+                      color: statusFilter === opt.id ? '#0066FF' : '#334155',
+                      fontWeight: statusFilter === opt.id ? 600 : 400,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span>{opt.label}</span>
+                    {statusFilter === opt.id && <Check size={12} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Sort Dropdown */}
+          <div className="action-pill-dropdown-wrapper" style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className="action-pill-dropdown"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenDropdown(openDropdown === 'sort' ? null : 'sort');
+              }}
+              style={{
+                backgroundColor: sortOrder !== 'newest' ? '#EFF6FF' : '#FFFFFF',
+                borderColor: sortOrder !== 'newest' ? '#0066FF' : '#E2E8F0',
+                color: sortOrder !== 'newest' ? '#0066FF' : '#475569',
+              }}
+            >
+              <ArrowUpDown size={13} color={sortOrder !== 'newest' ? '#0066FF' : '#64748B'} />
+              <span>
+                {sortOrder === 'newest'
+                  ? 'Sort'
+                  : sortOrder === 'oldest'
+                  ? 'Oldest First'
+                  : sortOrder === 'duration_desc'
+                  ? 'Longest'
+                  : sortOrder === 'duration_asc'
+                  ? 'Shortest'
+                  : 'Title (A-Z)'}
+              </span>
+              <ChevronDown size={13} color={sortOrder !== 'newest' ? '#0066FF' : '#94A3B8'} />
+            </button>
+
+            {openDropdown === 'sort' && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: '6px',
+                  backgroundColor: '#FFFFFF',
+                  border: '1px solid #E2E8F0',
+                  borderRadius: '8px',
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+                  zIndex: 50,
+                  minWidth: '160px',
+                  padding: '4px',
+                }}
+              >
+                {[
+                  { id: 'newest', label: 'Newest First' },
+                  { id: 'oldest', label: 'Oldest First' },
+                  { id: 'duration_desc', label: 'Longest Duration' },
+                  { id: 'duration_asc', label: 'Shortest Duration' },
+                  { id: 'title_asc', label: 'Title (A-Z)' },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      setSortOrder(opt.id);
+                      setOpenDropdown(null);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                      padding: '7px 10px',
+                      fontSize: '12.5px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      backgroundColor: sortOrder === opt.id ? '#EFF6FF' : 'transparent',
+                      color: sortOrder === opt.id ? '#0066FF' : '#334155',
+                      fontWeight: sortOrder === opt.id ? 600 : 400,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span>{opt.label}</span>
+                    {sortOrder === opt.id && <Check size={12} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -656,38 +1011,100 @@ export default function MeetingsPage() {
                       </Link>
                     </div>
 
-                    <div className="detail-audio-player">
+                    {/* Real HTML5 Audio Element */}
+                    {currentMeeting?.recording_url && (
+                      <audio
+                        ref={audioRef}
+                        src={currentMeeting.recording_url}
+                        preload="metadata"
+                        onTimeUpdate={() => {
+                          if (audioRef.current) {
+                            setCurrentTime(audioRef.current.currentTime);
+                          }
+                        }}
+                        onLoadedMetadata={() => {
+                          if (audioRef.current) {
+                            setDuration(audioRef.current.duration);
+                          }
+                        }}
+                        onEnded={() => {
+                          setIsPlaying(false);
+                          setCurrentTime(0);
+                        }}
+                      />
+                    )}
+
+                    <div className="detail-audio-player" style={{ opacity: currentMeeting?.recording_url ? 1 : 0.65 }}>
                       <button
                         type="button"
                         className="player-play-btn"
-                        onClick={() => setIsPlaying(!isPlaying)}
+                        onClick={togglePlayAudio}
                         aria-label={isPlaying ? 'Pause' : 'Play'}
+                        title={currentMeeting?.recording_url ? (isPlaying ? 'Pause' : 'Play') : 'No audio recording available'}
+                        style={{ cursor: currentMeeting?.recording_url ? 'pointer' : 'not-allowed' }}
                       >
                         {isPlaying ? <Pause size={14} /> : <Play size={14} style={{ marginLeft: '1px' }} />}
                       </button>
 
-                      <span className="player-time-display tabular-nums">0:00 / 25:00</span>
+                      <span className="player-time-display tabular-nums">
+                        {formatAudioTime(currentTime)} / {formatAudioTime(duration || (currentMeeting?.expected_duration_minutes ? currentMeeting.expected_duration_minutes * 60 : 0))}
+                      </span>
 
-                      <div className="player-track">
-                        <div className="player-progress" />
+                      <div
+                        className="player-track"
+                        onClick={handleSeek}
+                        style={{ cursor: currentMeeting?.recording_url && duration > 0 ? 'pointer' : 'default' }}
+                        title={currentMeeting?.recording_url ? 'Click to seek' : ''}
+                      >
+                        <div
+                          className="player-progress"
+                          style={{
+                            width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                            transition: isPlaying ? 'none' : 'width 100ms ease',
+                          }}
+                        />
                       </div>
 
                       <button
                         type="button"
                         className="player-speed-btn"
                         onClick={cycleSpeed}
+                        title="Playback speed"
+                        disabled={!currentMeeting?.recording_url}
                       >
                         {playbackSpeed}
                       </button>
 
-                      <button
-                        type="button"
-                        className="player-download-btn"
-                        title="Download Recording"
-                      >
-                        <Download size={15} />
-                      </button>
+                      {currentMeeting?.recording_url ? (
+                        <a
+                          href={currentMeeting.recording_url}
+                          download={`${currentMeeting.title || 'recording'}.wav`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="player-download-btn"
+                          title="Download Recording (WAV)"
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}
+                        >
+                          <Download size={15} />
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          className="player-download-btn"
+                          title="No recording file available"
+                          disabled
+                          style={{ cursor: 'not-allowed', opacity: 0.5 }}
+                        >
+                          <Download size={15} />
+                        </button>
+                      )}
                     </div>
+
+                    {audioNotice && (
+                      <div style={{ marginTop: '6px', fontSize: '11.5px', color: '#64748B', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span>ℹ️ {audioNotice}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

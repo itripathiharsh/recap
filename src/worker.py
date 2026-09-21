@@ -36,6 +36,7 @@ from src.supabase_client import (
     db_save_transcript,
     db_update_job,
     db_update_meeting_status,
+    db_upload_recording_audio,
 )
 
 logger = logging.getLogger("worker")
@@ -105,6 +106,7 @@ def execute_meeting_pipeline(
             pulse_source=pulse_source,
         )
         logger.info("Audio recorded successfully at: %s", audio_path)
+        db_upload_recording_audio(meeting_id=meeting_id, audio_path=audio_path)
     except Exception as exc:
         err_msg = f"Join/Recording failed: {exc}"
         logger.error(err_msg, exc_info=True)

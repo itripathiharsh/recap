@@ -350,3 +350,28 @@ def db_claim_meeting(meeting_id: str, target_status: str = "joining") -> bool:
         logger.error("Failed to claim meeting %s: %s", meeting_id, exc)
         return False
 
+
+def db_upload_recording_audio(meeting_id: str, audio_path: Path) -> str | None:
+    """Upload recorded audio file to Supabase Storage bucket 'recordings' and save recording_url."""
+    client = get_supabase_client()
+    if not client or not audio_path.exists():
+        return None
+
+    try:
+        storage_path = f"{meeting_id}/audio.wav"
+        with open(audio_path, "rb") as f:
+            client.storage.from_("recordings").upload(
+                path=storage_path,
+                file=f,
+                file_options={"content-type": "audio/wav", "upsert": "true"},
+            )
+        supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+        public_url = f"{supabase_url}/storage/v1/object/public/recordings/{storage_path}"
+        client.table("meetings").update({"recording_url": public_url}).eq("id", meeting_id).execute()
+        logger.info("Uploaded recording audio to Supabase Storage: %s", public_url)
+        return public_url
+    except Exception as exc:
+        logger.warning("Failed to upload recording audio to Supabase Storage: %s", exc)
+        return None
+
+

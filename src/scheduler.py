@@ -38,6 +38,7 @@ class SchedulerDaemon:
         self.current_meeting_id: str | None = None
         self.current_state = "idle"
         self.last_heartbeat_time = 0.0
+        self.last_cleanup_time = 0.0
 
     def handle_signal(self, signum: int, frame: Any) -> None:
         """Handle graceful termination signals."""
@@ -127,6 +128,22 @@ class SchedulerDaemon:
                     current_state=self.current_state,
                 )
                 self.last_heartbeat_time = now
+
+            # Run periodic audio retention cleanup (> 7 days)
+            if now - self.last_cleanup_time >= 3600 * 6:
+                try:
+                    from src.cleanup import clean_audio_recordings
+                    report = clean_audio_recordings()
+                    if report.get("files_deleted"):
+                        logger.info(
+                            "Audio retention cleanup ran: %d files deleted, %.2f MB freed across %d meetings.",
+                            len(report["files_deleted"]),
+                            report["bytes_freed"] / (1024 * 1024),
+                            report["scanned_meetings"],
+                        )
+                    self.last_cleanup_time = now
+                except Exception as exc:
+                    logger.error("Error running audio retention cleanup: %s", exc)
 
             try:
                 self.check_and_execute_upcoming()

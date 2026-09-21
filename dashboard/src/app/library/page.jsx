@@ -28,10 +28,21 @@ export default function LibraryPage() {
   const [moms, setMoms] = useState([]);
   const [transcriptsCount, setTranscriptsCount] = useState(2);
   const [speakerTurns, setSpeakerTurns] = useState({});
-  const [diskUsage, setDiskUsage] = useState({ used: '0.2', total: '25.0', pct: 1 });
+  const [diskUsage, setDiskUsage] = useState({
+    usedMb: '37.0',
+    usedGb: '0.04',
+    totalGb: '1.0',
+    pct: 3.7,
+    fileCount: 3,
+    isSupabase: true,
+  });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterTab, setFilterTab] = useState('all'); // 'all', 'recordings', 'transcripts', 'summaries', 'actions'
+  const [dateRange, setDateRange] = useState('all'); // 'all', '7d', '30d', '90d'
+  const [meetingType, setMeetingType] = useState('all'); // 'all', 'Team Sync', 'API', 'Marketing', 'Testing', 'General'
+  const [platform, setPlatform] = useState('all'); // 'all', 'Google Meet', 'Zoom', 'Microsoft Teams'
+  const [selectedParticipant, setSelectedParticipant] = useState('all');
   const [selectedTag, setSelectedTag] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -56,7 +67,9 @@ export default function LibraryPage() {
         const turnsMap = {};
         (turnsData || []).forEach((t) => {
           if (!turnsMap[t.meeting_id]) turnsMap[t.meeting_id] = [];
-          turnsMap[t.meeting_id].push(t.speaker);
+          if (t.speaker && !turnsMap[t.meeting_id].includes(t.speaker)) {
+            turnsMap[t.meeting_id].push(t.speaker);
+          }
         });
 
         setMeetings(meetData || []);
@@ -66,21 +79,26 @@ export default function LibraryPage() {
         }
         setSpeakerTurns(turnsMap);
 
-        // Fetch real disk usage from backend API if available
+        // Fetch real Supabase Storage usage via RPC
         try {
-          const res = await fetch('http://localhost:8000/api/system/status');
-          if (res.ok) {
-            const data = await res.json();
-            if (data.disk_usage) {
-              setDiskUsage({
-                used: data.disk_usage.used_gb.toString(),
-                total: data.disk_usage.total_gb.toString(),
-                pct: Math.round(data.disk_usage.percent_used),
-              });
-            }
+          const { data: storageData, error: storageErr } = await supabase.rpc('get_storage_usage');
+          if (storageData && !storageErr) {
+            const usedMb = Number(storageData.used_mb || 0).toFixed(1);
+            const totalGb = Number(storageData.total_gb || 1.0).toFixed(1);
+            const usedGb = Number(storageData.used_gb || 0).toFixed(3);
+            const rawPct = ((storageData.used_bytes || 0) / (totalGb * 1024 * 1024 * 1024)) * 100;
+            const pct = Math.max(0.1, Math.round(rawPct * 10) / 10);
+            setDiskUsage({
+              usedMb,
+              usedGb,
+              totalGb,
+              pct,
+              fileCount: storageData.file_count || 0,
+              isSupabase: true,
+            });
           }
-        } catch {
-          // Keep lightweight local fallback
+        } catch (storageCatch) {
+          console.warn('Storage RPC fetch warning:', storageCatch);
         }
       } catch (err) {
         console.error('Error loading library data:', err);
@@ -102,7 +120,7 @@ export default function LibraryPage() {
 
   // Real completed meetings count
   const completedCount = useMemo(() => {
-    return meetings.filter((m) => m.status === 'completed').length;
+    return meetings.filter((m) => m.status === 'completed' || Boolean(m.recording_url)).length;
   }, [meetings]);
 
   // Total action items
@@ -111,13 +129,17 @@ export default function LibraryPage() {
   }, [moms]);
 
   // Distinct speakers across all meetings
-  const uniqueSpeakersCount = useMemo(() => {
+  const uniqueSpeakersList = useMemo(() => {
     const set = new Set();
     Object.values(speakerTurns).forEach((arr) => {
       arr.forEach((s) => set.add(s));
     });
-    return set.size || 3;
+    return Array.from(set);
   }, [speakerTurns]);
+
+  const uniqueSpeakersCount = useMemo(() => {
+    return uniqueSpeakersList.length || 3;
+  }, [uniqueSpeakersList]);
 
   // Derived real tags from actual meeting titles
   const popularTags = useMemo(() => {
@@ -145,29 +167,69 @@ export default function LibraryPage() {
     return tags;
   };
 
+  const handleClearAll = () => {
+    setSelectedTag(null);
+    setSearch('');
+    setFilterTab('all');
+    setDateRange('all');
+    setMeetingType('all');
+    setPlatform('all');
+    setSelectedParticipant('all');
+  };
+
   // Filter items
   const filteredMeetings = useMemo(() => {
     return meetings.filter((m) => {
       const qLower = search.toLowerCase();
       const mom = momMap[m.id];
       const matchesSearch =
-        m.title.toLowerCase().includes(qLower) ||
+        (m.title || '').toLowerCase().includes(qLower) ||
         (mom?.summary && mom.summary.toLowerCase().includes(qLower));
 
       if (!matchesSearch) return false;
 
+      // Tag filter
+      const tags = getTagsForMeeting(m.title).map((t) => t.name.toLowerCase());
       if (selectedTag) {
-        const tags = getTagsForMeeting(m.title).map((t) => t.name.toLowerCase());
         if (!tags.includes(selectedTag.toLowerCase())) return false;
       }
 
-      if (filterTab === 'recordings') return m.status === 'completed';
+      // Meeting type filter
+      if (meetingType !== 'all') {
+        if (!tags.includes(meetingType.toLowerCase())) return false;
+      }
+
+      // Date range filter
+      if (dateRange !== 'all') {
+        const meetDate = new Date(m.scheduled_start || m.started_at || m.created_at);
+        const diffDays = (new Date() - meetDate) / (1000 * 60 * 60 * 24);
+        if (dateRange === '7d' && diffDays > 7) return false;
+        if (dateRange === '30d' && diffDays > 30) return false;
+        if (dateRange === '90d' && diffDays > 90) return false;
+      }
+
+      // Platform filter
+      if (platform !== 'all') {
+        const link = (m.meet_link || '').toLowerCase();
+        if (platform === 'Google Meet' && !link.includes('meet.google.com')) return false;
+        if (platform === 'Zoom' && !link.includes('zoom.us')) return false;
+        if (platform === 'Microsoft Teams' && !link.includes('teams.microsoft.com')) return false;
+      }
+
+      // Participant filter
+      if (selectedParticipant !== 'all') {
+        const speakers = speakerTurns[m.id] || [];
+        if (!speakers.includes(selectedParticipant)) return false;
+      }
+
+      // Filter tab
+      if (filterTab === 'recordings') return m.status === 'completed' || Boolean(m.recording_url);
       if (filterTab === 'summaries') return Boolean(mom?.summary);
       if (filterTab === 'transcripts') return m.status === 'completed';
       if (filterTab === 'actions') return Boolean(mom?.action_items && mom.action_items.length > 0);
       return true;
     });
-  }, [meetings, search, filterTab, selectedTag, momMap]);
+  }, [meetings, search, filterTab, selectedTag, meetingType, dateRange, platform, selectedParticipant, momMap, speakerTurns]);
 
   return (
     <div>
@@ -465,23 +527,33 @@ export default function LibraryPage() {
 
         {/* Right Column: Storage, Filters & Popular Tags */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {/* Card 1: Storage Usage */}
+          {/* Card 1: Storage Usage (Real Supabase Storage) */}
           <div className="library-sidebar-card">
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
               <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: '#EFF6FF', color: '#0066FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Database size={16} />
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A' }}>Storage Usage</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A' }}>Storage Usage</div>
+                  <span style={{ fontSize: '10px', color: '#0066FF', backgroundColor: '#EFF6FF', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                    Supabase
+                  </span>
+                </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: '#64748B', marginTop: '2px' }}>
-                  <span>{diskUsage.used} GB of {diskUsage.total} GB used</span>
-                  <span className="tabular-nums" style={{ fontWeight: 600 }}>{diskUsage.pct}%</span>
+                  <span>{diskUsage.usedMb} MB of {diskUsage.totalGb} GB used</span>
+                  <span className="tabular-nums" style={{ fontWeight: 600, color: '#0F172A' }}>{diskUsage.pct}%</span>
                 </div>
               </div>
             </div>
 
-            <div style={{ height: '6px', backgroundColor: '#F1F5F9', borderRadius: '3px', overflow: 'hidden', marginBottom: '10px' }}>
-              <div style={{ width: `${Math.max(diskUsage.pct, 2)}%`, height: '100%', backgroundColor: '#0066FF', borderRadius: '3px' }} />
+            <div style={{ height: '6px', backgroundColor: '#F1F5F9', borderRadius: '3px', overflow: 'hidden', marginBottom: '8px' }}>
+              <div style={{ width: `${Math.max(diskUsage.pct, 3)}%`, height: '100%', backgroundColor: '#0066FF', borderRadius: '3px', transition: 'width 300ms ease' }} />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: '#94A3B8', marginBottom: '8px' }}>
+              <span>{diskUsage.fileCount} audio files</span>
+              <span>Bucket: &apos;recordings&apos;</span>
             </div>
 
             <Link href="/settings" style={{ fontSize: '12px', color: '#0066FF', fontWeight: 600, textDecoration: 'none' }}>
@@ -498,33 +570,136 @@ export default function LibraryPage() {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedTag(null);
-                  setSearch('');
-                  setFilterTab('all');
-                }}
-                style={{ fontSize: '11.5px', color: '#0066FF', fontWeight: 600 }}
+                onClick={handleClearAll}
+                style={{ fontSize: '11.5px', color: '#0066FF', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' }}
               >
                 Clear All
               </button>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {[
-                { label: 'Date Range', val: 'Last 30 days' },
-                { label: 'Meeting Type', val: 'All types' },
-                { label: 'Platform', val: 'All platforms' },
-                { label: 'Participants', val: 'All participants' },
-                { label: 'Tags', val: selectedTag ? selectedTag : 'All tags' },
-              ].map((item) => (
-                <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '1px solid #EDF2F7', borderRadius: '8px', backgroundColor: '#F8FAFC' }}>
-                  <span style={{ fontSize: '12px', color: '#64748B' }}>{item.label}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600, color: '#0F172A' }}>
-                    <span>{item.val}</span>
-                    <ChevronDown size={12} color="#94A3B8" />
-                  </div>
-                </div>
-              ))}
+              {/* 1. Date Range */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '1px solid #EDF2F7', borderRadius: '8px', backgroundColor: '#F8FAFC' }}>
+                <span style={{ fontSize: '12px', color: '#64748B' }}>Date Range</span>
+                <select
+                  value={dateRange}
+                  onChange={(e) => setDateRange(e.target.value)}
+                  style={{
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    color: dateRange !== 'all' ? '#0066FF' : '#0F172A',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    textAlign: 'right',
+                  }}
+                >
+                  <option value="all">All time</option>
+                  <option value="7d">Last 7 days</option>
+                  <option value="30d">Last 30 days</option>
+                  <option value="90d">Last 90 days</option>
+                </select>
+              </div>
+
+              {/* 2. Meeting Type */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '1px solid #EDF2F7', borderRadius: '8px', backgroundColor: '#F8FAFC' }}>
+                <span style={{ fontSize: '12px', color: '#64748B' }}>Meeting Type</span>
+                <select
+                  value={meetingType}
+                  onChange={(e) => setMeetingType(e.target.value)}
+                  style={{
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    color: meetingType !== 'all' ? '#0066FF' : '#0F172A',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    textAlign: 'right',
+                  }}
+                >
+                  <option value="all">All types</option>
+                  <option value="Team Sync">Team Sync</option>
+                  <option value="API">API</option>
+                  <option value="Marketing">Marketing</option>
+                  <option value="Testing">Testing</option>
+                  <option value="General">General</option>
+                </select>
+              </div>
+
+              {/* 3. Platform */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '1px solid #EDF2F7', borderRadius: '8px', backgroundColor: '#F8FAFC' }}>
+                <span style={{ fontSize: '12px', color: '#64748B' }}>Platform</span>
+                <select
+                  value={platform}
+                  onChange={(e) => setPlatform(e.target.value)}
+                  style={{
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    color: platform !== 'all' ? '#0066FF' : '#0F172A',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    textAlign: 'right',
+                  }}
+                >
+                  <option value="all">All platforms</option>
+                  <option value="Google Meet">Google Meet</option>
+                  <option value="Zoom">Zoom</option>
+                  <option value="Microsoft Teams">Microsoft Teams</option>
+                </select>
+              </div>
+
+              {/* 4. Participants */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '1px solid #EDF2F7', borderRadius: '8px', backgroundColor: '#F8FAFC' }}>
+                <span style={{ fontSize: '12px', color: '#64748B' }}>Participants</span>
+                <select
+                  value={selectedParticipant}
+                  onChange={(e) => setSelectedParticipant(e.target.value)}
+                  style={{
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    color: selectedParticipant !== 'all' ? '#0066FF' : '#0F172A',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    textAlign: 'right',
+                    maxWidth: '130px',
+                  }}
+                >
+                  <option value="all">All participants</option>
+                  {uniqueSpeakersList.map((spk) => (
+                    <option key={spk} value={spk}>{spk}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 5. Tags */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '1px solid #EDF2F7', borderRadius: '8px', backgroundColor: '#F8FAFC' }}>
+                <span style={{ fontSize: '12px', color: '#64748B' }}>Tags</span>
+                <select
+                  value={selectedTag || 'all'}
+                  onChange={(e) => setSelectedTag(e.target.value === 'all' ? null : e.target.value)}
+                  style={{
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    color: selectedTag ? '#0066FF' : '#0F172A',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    textAlign: 'right',
+                  }}
+                >
+                  <option value="all">All tags</option>
+                  {popularTags.map((tag) => (
+                    <option key={tag.name} value={tag.name}>{tag.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 

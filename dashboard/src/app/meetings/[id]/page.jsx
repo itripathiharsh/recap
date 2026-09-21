@@ -15,6 +15,9 @@ import {
   Calendar,
   Edit2,
   User,
+  Play,
+  Pause,
+  Volume2,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import StatusBadge from '../../../components/StatusBadge';
@@ -32,6 +35,13 @@ export default function MeetingDetailPage() {
   const [copied, setCopied] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState(null);
   const [newSpeakerName, setNewSpeakerName] = useState('');
+
+  // Audio player state
+  const audioRef = React.useRef(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [playbackSpeed, setPlaybackSpeed] = useState('1x');
 
   const handleRenameSpeaker = async (oldName) => {
     if (!newSpeakerName.trim() || newSpeakerName.trim() === oldName) {
@@ -217,6 +227,139 @@ export default function MeetingDetailPage() {
 
       {/* Processing Progress & Time-Remaining Bar (for active/processing meetings) */}
       <ProcessingProgress meeting={meeting} />
+
+      {/* Audio Recording Player (if recording_url exists) */}
+      {meeting.recording_url && (
+        <div
+          style={{
+            backgroundColor: '#F8FAFC',
+            border: '1px solid #E2E8F0',
+            borderRadius: '10px',
+            padding: '12px 16px',
+            marginBottom: '20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: '#0F172A' }}>
+              <Volume2 size={15} color="#0066FF" />
+              <span>Meeting Audio Recording</span>
+            </div>
+            <a
+              href={meeting.recording_url}
+              download={`${meeting.title || 'recording'}.wav`}
+              target="_blank"
+              rel="noreferrer"
+              style={{ fontSize: '12px', color: '#0066FF', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}
+            >
+              <Download size={13} />
+              <span>Download Audio (WAV)</span>
+            </a>
+          </div>
+
+          <audio
+            ref={audioRef}
+            src={meeting.recording_url}
+            preload="metadata"
+            onTimeUpdate={() => {
+              if (audioRef.current) setCurrentTime(audioRef.current.currentTime);
+            }}
+            onLoadedMetadata={() => {
+              if (audioRef.current) setDuration(audioRef.current.duration);
+            }}
+            onEnded={() => {
+              setIsPlaying(false);
+              setCurrentTime(0);
+            }}
+          />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                if (!audioRef.current) return;
+                if (isPlaying) {
+                  audioRef.current.pause();
+                  setIsPlaying(false);
+                } else {
+                  audioRef.current.play();
+                  setIsPlaying(true);
+                }
+              }}
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                backgroundColor: '#0066FF',
+                color: '#FFFFFF',
+                border: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                flexShrink: 0,
+              }}
+            >
+              {isPlaying ? <Pause size={14} /> : <Play size={14} style={{ marginLeft: '1px' }} />}
+            </button>
+
+            <span className="tabular-nums" style={{ fontSize: '12px', color: '#64748B', minWidth: '75px' }}>
+              {Math.floor(currentTime / 60)}:{(Math.floor(currentTime % 60)).toString().padStart(2, '0')} / {Math.floor(duration / 60)}:{(Math.floor(duration % 60)).toString().padStart(2, '0')}
+            </span>
+
+            <div
+              onClick={(e) => {
+                if (!audioRef.current || !duration) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                audioRef.current.currentTime = pct * duration;
+                setCurrentTime(pct * duration);
+              }}
+              style={{
+                flex: 1,
+                height: '6px',
+                backgroundColor: '#E2E8F0',
+                borderRadius: '3px',
+                cursor: 'pointer',
+                position: 'relative',
+              }}
+            >
+              <div
+                style={{
+                  width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                  height: '100%',
+                  backgroundColor: '#0066FF',
+                  borderRadius: '3px',
+                }}
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const speeds = ['1x', '1.25x', '1.5x', '2x'];
+                const next = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.length];
+                setPlaybackSpeed(next);
+                if (audioRef.current) audioRef.current.playbackRate = parseFloat(next);
+              }}
+              style={{
+                fontSize: '11.5px',
+                fontWeight: 600,
+                color: '#475569',
+                backgroundColor: '#EFF6FF',
+                border: '1px solid #BFDBFE',
+                borderRadius: '5px',
+                padding: '3px 8px',
+                cursor: 'pointer',
+              }}
+            >
+              {playbackSpeed}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Editorial Workspace Area */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
