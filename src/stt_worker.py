@@ -157,6 +157,7 @@ def _transcribe_with_groq(audio_path: Path, keys: list[str]) -> tuple[list[dict[
     """Transcribe audio using Groq Whisper Large v3 with multi-key failover."""
     try:
         from groq import Groq
+        import httpx
     except ImportError as exc:
         raise RuntimeError("groq is not installed") from exc
 
@@ -172,7 +173,7 @@ def _transcribe_with_groq(audio_path: Path, keys: list[str]) -> tuple[list[dict[
                 continue
             try:
                 logger.info("Attempting Groq STT with key index %d", idx)
-                client = Groq(api_key=key)
+                client = Groq(api_key=key, http_client=httpx.Client())
                 transcription = client.audio.transcriptions.create(
                     file=(file_to_send.name, audio_bytes),
                     model="whisper-large-v3",
