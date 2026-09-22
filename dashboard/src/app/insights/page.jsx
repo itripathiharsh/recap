@@ -41,7 +41,9 @@ export default function InsightsPage() {
         const { data: momData } = await supabase.from('mom').select('*');
         const { data: turnsData } = await supabase.from('speaker_turns').select('speaker');
 
-        setMeetings(meetData || []);
+        // Only calculate insights from genuine completed meetings
+        const genuineMeetings = (meetData || []).filter((m) => m.status === 'completed');
+        setMeetings(genuineMeetings);
         setMoms(momData || []);
         setSpeakerTurns(turnsData || []);
       } catch (err) {

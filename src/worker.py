@@ -37,7 +37,9 @@ from src.supabase_client import (
     db_update_job,
     db_update_meeting_status,
     db_upload_recording_audio,
+    db_delete_recording_audio,
 )
+from src.substance_filter import evaluate_meeting_substance
 
 logger = logging.getLogger("worker")
 
@@ -134,6 +136,40 @@ def execute_meeting_pipeline(
             language=stt_result.get("language", "en"),
         )
         logger.info("STT completed and saved to Supabase.")
+
+        # Substance Gatekeeper Check:
+        # Before running expensive diarization and LLM MOM, verify that this is a genuine meeting.
+        is_substantive, substance_reason = evaluate_meeting_substance(
+            audio_path=audio_path,
+            stt_result=stt_result,
+        )
+        if not is_substantive:
+            logger.warning("Meeting %s discarded by substance filter: %s", meeting_id, substance_reason)
+            ended_at = datetime.now(timezone.utc).isoformat()
+            db_update_meeting_status(
+                meeting_id=meeting_id,
+                status="discarded",
+                error_message=f"Discarded: {substance_reason}",
+                ended_at=ended_at,
+            )
+            if job_id:
+                db_update_job(job_id=job_id, status="completed", completed_at=ended_at)
+            db_record_system_event(
+                level="warning",
+                event_type="meeting_discarded",
+                message=f"Meeting '{title}' discarded: {substance_reason}",
+                meeting_id=meeting_id,
+            )
+            # Storage cleanup: remove local audio and purge from Supabase storage
+            try:
+                if audio_path and audio_path.exists():
+                    audio_path.unlink(missing_ok=True)
+                db_delete_recording_audio(meeting_id)
+            except Exception as clean_err:
+                logger.debug("Failed to clean audio for discarded meeting: %s", clean_err)
+
+            logger.info("Pipeline terminated early for non-substantive meeting %s.", meeting_id)
+            return True
     except Exception as exc:
         err_msg = f"Transcription failed: {exc}"
         logger.error(err_msg, exc_info=True)

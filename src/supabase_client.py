@@ -375,3 +375,45 @@ def db_upload_recording_audio(meeting_id: str, audio_path: Path) -> str | None:
         return None
 
 
+def db_delete_recording_audio(meeting_id: str) -> bool:
+    """Delete recorded audio from Supabase Storage bucket 'recordings' and unset recording_url."""
+    client = get_supabase_client()
+    if not client:
+        return False
+
+    try:
+        storage_path = f"{meeting_id}/audio.wav"
+        client.storage.from_("recordings").remove([storage_path])
+        client.table("meetings").update({"recording_url": None}).eq("id", meeting_id).execute()
+        logger.info("Deleted recording audio from Supabase Storage for meeting: %s", meeting_id)
+        return True
+    except Exception as exc:
+        logger.warning("Failed to delete recording audio from Supabase Storage for %s: %s", meeting_id, exc)
+        return False
+
+
+def db_delete_meeting(meeting_id: str) -> bool:
+    """Completely purge a meeting and all its associated data and audio."""
+    client = get_supabase_client()
+    if not client:
+        return False
+
+    try:
+        # 1. Delete storage audio
+        db_delete_recording_audio(meeting_id)
+
+        # 2. Delete database relations
+        client.table("speaker_turns").delete().eq("meeting_id", meeting_id).execute()
+        client.table("mom").delete().eq("meeting_id", meeting_id).execute()
+        client.table("transcripts").delete().eq("meeting_id", meeting_id).execute()
+        client.table("jobs").delete().eq("meeting_id", meeting_id).execute()
+        client.table("system_events").delete().eq("meeting_id", meeting_id).execute()
+        client.table("meetings").delete().eq("id", meeting_id).execute()
+
+        logger.info("Successfully purged meeting %s and all associated records.", meeting_id)
+        return True
+    except Exception as exc:
+        logger.error("Failed to delete meeting %s: %s", meeting_id, exc)
+        return False
+
+

@@ -18,6 +18,7 @@ import {
   Play,
   Pause,
   Volume2,
+  Trash2,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import StatusBadge from '../../../components/StatusBadge';
@@ -136,6 +137,26 @@ export default function MeetingDetailPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handleDeleteMeeting = async () => {
+    if (!window.confirm('Are you sure you want to permanently delete this meeting? This will remove all audio recordings, transcripts, and notes.')) {
+      return;
+    }
+    try {
+      await supabase.storage.from('recordings').remove([`${meetingId}/audio.wav`]);
+      await supabase.from('speaker_turns').delete().eq('meeting_id', meetingId);
+      await supabase.from('mom').delete().eq('meeting_id', meetingId);
+      await supabase.from('transcripts').delete().eq('meeting_id', meetingId);
+      await supabase.from('jobs').delete().eq('meeting_id', meetingId);
+      await supabase.from('system_events').delete().eq('meeting_id', meetingId);
+      await supabase.from('meetings').delete().eq('id', meetingId);
+
+      window.location.href = '/meetings';
+    } catch (err) {
+      console.error('Failed to delete meeting:', err);
+      alert('Failed to delete meeting. Please try again.');
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -227,6 +248,17 @@ export default function MeetingDetailPage() {
                 </button>
               </>
             )}
+
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleDeleteMeeting}
+              style={{ color: '#EF4444' }}
+              title="Delete meeting permanently"
+            >
+              <Trash2 size={13} aria-hidden="true" />
+              <span>Delete</span>
+            </button>
           </div>
         </div>
       </div>

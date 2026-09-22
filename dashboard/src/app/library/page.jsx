@@ -18,6 +18,7 @@ import {
   MoreHorizontal,
   LayoutList,
   LayoutGrid,
+  Trash2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import AddMeetingModal from '../../components/AddMeetingModal';
@@ -222,6 +223,9 @@ export default function LibraryPage() {
         if (!speakers.includes(selectedParticipant)) return false;
       }
 
+      // Filter out discarded/empty meetings
+      if (m.status === 'discarded') return false;
+
       // Filter tab
       if (filterTab === 'recordings') return m.status === 'completed' || Boolean(m.recording_url);
       if (filterTab === 'summaries') return Boolean(mom?.summary);
@@ -230,6 +234,27 @@ export default function LibraryPage() {
       return true;
     });
   }, [meetings, search, filterTab, selectedTag, meetingType, dateRange, platform, selectedParticipant, momMap, speakerTurns]);
+
+  const handleDeleteMeeting = async (id, e) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm('Are you sure you want to permanently delete this meeting? This will remove all audio recordings, transcripts, and notes.')) {
+      return;
+    }
+    try {
+      await supabase.storage.from('recordings').remove([`${id}/audio.wav`]);
+      await supabase.from('speaker_turns').delete().eq('meeting_id', id);
+      await supabase.from('mom').delete().eq('meeting_id', id);
+      await supabase.from('transcripts').delete().eq('meeting_id', id);
+      await supabase.from('jobs').delete().eq('meeting_id', id);
+      await supabase.from('system_events').delete().eq('meeting_id', id);
+      await supabase.from('meetings').delete().eq('id', id);
+
+      setMeetings((prev) => prev.filter((m) => m.id !== id));
+    } catch (err) {
+      console.error('Failed to delete meeting:', err);
+      alert('Failed to delete meeting. Please try again.');
+    }
+  };
 
   return (
     <div>
@@ -513,8 +538,16 @@ export default function LibraryPage() {
                       </td>
 
                       <td style={{ width: '30px', textAlign: 'right' }}>
-                        <button type="button" style={{ color: '#94A3B8' }} aria-label="More options">
-                          <MoreHorizontal size={15} />
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteMeeting(m.id, e)}
+                          style={{ color: '#94A3B8', cursor: 'pointer', padding: '4px' }}
+                          title="Delete meeting"
+                          aria-label="Delete meeting"
+                          onMouseEnter={(e) => (e.currentTarget.style.color = '#EF4444')}
+                          onMouseLeave={(e) => (e.currentTarget.style.color = '#94A3B8')}
+                        >
+                          <Trash2 size={15} />
                         </button>
                       </td>
                     </tr>

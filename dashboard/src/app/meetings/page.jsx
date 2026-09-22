@@ -25,6 +25,7 @@ import {
   Filter,
   ArrowUpDown,
   ExternalLink,
+  Trash2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import AddMeetingModal from '../../components/AddMeetingModal';
@@ -170,6 +171,9 @@ export default function MeetingsPage() {
         } else if (m.status !== statusFilter) {
           return false;
         }
+      } else {
+        // By default, exclude discarded/empty calls from the main view
+        if (m.status === 'discarded') return false;
       }
 
       return true;
@@ -225,6 +229,30 @@ export default function MeetingsPage() {
       else next.add(id);
       return next;
     });
+  };
+
+  const handleDeleteMeeting = async (id, e) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm('Are you sure you want to permanently delete this meeting? This will remove all audio recordings, transcripts, and notes.')) {
+      return;
+    }
+    try {
+      await supabase.storage.from('recordings').remove([`${id}/audio.wav`]);
+      await supabase.from('speaker_turns').delete().eq('meeting_id', id);
+      await supabase.from('mom').delete().eq('meeting_id', id);
+      await supabase.from('transcripts').delete().eq('meeting_id', id);
+      await supabase.from('jobs').delete().eq('meeting_id', id);
+      await supabase.from('system_events').delete().eq('meeting_id', id);
+      await supabase.from('meetings').delete().eq('id', id);
+
+      setMeetings((prev) => prev.filter((m) => m.id !== id));
+      if (selectedMeetingId === id) {
+        setSelectedMeetingId(null);
+      }
+    } catch (err) {
+      console.error('Failed to delete meeting:', err);
+      alert('Failed to delete meeting. Please try again.');
+    }
   };
 
   const toggleActionDone = (actionId) => {
@@ -784,7 +812,7 @@ export default function MeetingsPage() {
                         </div>
                       </td>
 
-                      <td style={{ textAlign: 'right' }}>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <button
                           type="button"
                           onClick={(e) => toggleFavorite(m.id, e)}
@@ -792,6 +820,17 @@ export default function MeetingsPage() {
                           aria-label="Star meeting"
                         >
                           <Star size={14} fill={favorites.has(m.id) ? '#F59E0B' : 'none'} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteMeeting(m.id, e)}
+                          style={{ color: '#94A3B8', padding: '4px', marginLeft: '2px' }}
+                          title="Delete meeting"
+                          aria-label="Delete meeting"
+                          onMouseEnter={(e) => (e.currentTarget.style.color = '#EF4444')}
+                          onMouseLeave={(e) => (e.currentTarget.style.color = '#94A3B8')}
+                        >
+                          <Trash2 size={14} />
                         </button>
                       </td>
                     </tr>
@@ -846,6 +885,16 @@ export default function MeetingsPage() {
                   >
                     <ExternalLink size={15} />
                   </Link>
+                  <button
+                    type="button"
+                    className="detail-icon-btn"
+                    onClick={(e) => handleDeleteMeeting(currentMeeting.id, e)}
+                    title="Delete Meeting"
+                    aria-label="Delete Meeting"
+                    style={{ color: '#EF4444' }}
+                  >
+                    <Trash2 size={15} />
+                  </button>
                 </div>
               </div>
 
