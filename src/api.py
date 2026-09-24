@@ -23,12 +23,24 @@ import os
 from pathlib import Path
 import shutil
 from typing import Any
+import secrets
+import time
 import uuid
 
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+from src.google_meet_client import (
+    exchange_code_for_tokens,
+    extract_meeting_code,
+    generate_auth_url,
+    get_conference_record_for_meeting,
+    get_connection_status,
+    get_meeting_participants,
+    save_meeting_participants,
+)
 from src.job_state import (
     JobStatus,
     create_job,
@@ -46,6 +58,9 @@ from src.supabase_client import (
 )
 
 logger = logging.getLogger("api")
+
+# In-memory OAuth state tracker for CSRF protection: state -> expiry_timestamp
+_oauth_states: dict[str, float] = {}
 
 app = FastAPI(
     title="Personal Meeting Recorder API",
@@ -71,6 +86,13 @@ _last_heartbeat: dict[str, Any] = {
     "status": "online",
     "current_meeting": None,
 }
+
+
+@app.get("/")
+@app.get("/health")
+def health_check() -> dict[str, str]:
+    """Health check endpoint for monitors and load balancers."""
+    return {"status": "ok", "service": "meet-recorder-api"}
 
 
 # --- Request/Response Models ---
@@ -376,3 +398,262 @@ def post_heartbeat_endpoint(req: HeartbeatRequest) -> dict[str, Any]:
         metadata={"current_meeting": req.current_meeting, **req.metadata},
     )
     return {"status": "ok", "received_at": now.isoformat()}
+
+
+# --- Google Meet REST API & OAuth Endpoints ---
+
+@app.get("/api/auth/google")
+def google_auth_endpoint(
+    redirect_uri: str | None = Query(None),
+    as_json: bool = Query(False, alias="json"),
+) -> Any:
+    """Generate Google OAuth authorization URL requesting offline access with CSRF protection."""
+    # Clean up expired states (> 10 minutes)
+    now = time.time()
+    expired = [s for s, exp in _oauth_states.items() if exp < now]
+    for s in expired:
+        _oauth_states.pop(s, None)
+
+    state = secrets.token_urlsafe(32)
+    _oauth_states[state] = now + 600.0  # 10 minutes TTL
+
+    try:
+        auth_url, _ = generate_auth_url(redirect_uri=redirect_uri, state=state)
+    except Exception as exc:
+        logger.error("Failed to generate Google auth URL: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not generate authorization URL: {exc}",
+        )
+
+    if as_json:
+        return {"authorization_url": auth_url, "state": state}
+
+    return RedirectResponse(url=auth_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+@app.get("/api/auth/google/callback")
+def google_auth_callback_endpoint(
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    redirect_uri: str | None = Query(None),
+) -> Any:
+    """Exchange OAuth authorization code for tokens, validate state, and store refresh token securely."""
+    if error:
+        logger.warning("Google OAuth error in callback: %s", error)
+        return HTMLResponse(
+            f"<h3>Google OAuth Error: {error}</h3><p>You may close this window.</p>",
+            status_code=400,
+        )
+
+    if not code or not state:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required parameters 'code' or 'state'.",
+        )
+
+    # Validate state for CSRF protection
+    now = time.time()
+    stored_expiry = _oauth_states.pop(state, None)
+    if stored_expiry is None or stored_expiry < now:
+        logger.warning("Invalid or expired OAuth state received: %s", state)
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired OAuth state (CSRF verification failed).",
+        )
+
+    try:
+        result = exchange_code_for_tokens(code=code, redirect_uri=redirect_uri)
+    except Exception as exc:
+        logger.error("Token exchange failed: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to exchange authorization code for tokens: {exc}",
+        )
+
+    account_identity = result.get("account_identity") or "Authorized User"
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Google Meet Connected</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f8fafc; }}
+        .card {{ background: white; padding: 32px 40px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); text-align: center; max-width: 420px; }}
+        .badge {{ background-color: #ecfdf5; color: #059669; padding: 6px 12px; border-radius: 9999px; font-weight: 600; font-size: 13px; display: inline-block; margin-bottom: 16px; }}
+        h2 {{ margin: 0 0 10px 0; color: #0f172a; }}
+        p {{ color: #64748b; font-size: 14px; margin: 0 0 20px 0; }}
+        .btn {{ display: inline-block; background-color: #2563eb; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 500; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="badge">&#10003; Connected</div>
+        <h2>Google Meet Connected</h2>
+        <p>Your Google Meet integration is now active for <strong>{account_identity}</strong>. You can safely close this tab and return to the dashboard.</p>
+    </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html_content, status_code=200)
+
+
+@app.get("/api/auth/google/status")
+def google_auth_status_endpoint() -> dict[str, Any]:
+    """Return Google Meet connection status and connected account identity without exposing tokens."""
+    return get_connection_status()
+
+
+@app.get("/api/meetings/{meeting_id}/participants")
+def get_meeting_participants_endpoint(meeting_id: str) -> dict[str, Any]:
+    """Retrieve participant names, join/leave times, and sessions via Google Meet REST API with DOM fallback."""
+    # 1. Look up meeting in DB or local state
+    meeting = None
+    try:
+        meeting = get_meeting_endpoint(meeting_id)
+    except HTTPException:
+        pass
+
+    if not meeting:
+        raise HTTPException(status_code=404, detail=f"Meeting {meeting_id} not found")
+
+    meet_link = meeting.get("meet_link")
+    scheduled_start = meeting.get("scheduled_start")
+    participants_file = DEFAULT_RECORDINGS_DIR / meeting_id / "participants.json"
+
+    # 2. Check if Google Meet REST API is connected
+    api_status = get_connection_status()
+    if api_status.get("connected") and meet_link:
+        meet_code = extract_meeting_code(meet_link)
+        conf_record = get_conference_record_for_meeting(meet_code, scheduled_time=scheduled_start)
+        if conf_record and "name" in conf_record:
+            conf_name = conf_record["name"]
+            participants = get_meeting_participants(conf_name)
+            if participants:
+                saved = save_meeting_participants(
+                    meeting_id=meeting_id,
+                    participants=participants,
+                    source="google_meet_api",
+                    conference_record=conf_name,
+                    recordings_dir=DEFAULT_RECORDINGS_DIR,
+                    jobs_dir=DEFAULT_JOBS_DIR,
+                )
+                return saved
+
+    # 3. Fallback to existing DOM participant extraction if available
+    if participants_file.exists():
+        try:
+            with open(participants_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            if isinstance(data, list):
+                clean_list = []
+                for item in data:
+                    if isinstance(item, str):
+                        clean_list.append({
+                            "displayName": item,
+                            "user_type": "unknown",
+                            "source": "dom_fallback",
+                        })
+                    elif isinstance(item, dict):
+                        clean_list.append(item)
+                return {
+                    "meeting_id": meeting_id,
+                    "source": "dom_fallback",
+                    "conference_record": None,
+                    "participants": clean_list,
+                }
+            elif isinstance(data, dict):
+                return data
+        except Exception as exc:
+            logger.warning("Could not read participants file for %s: %s", meeting_id, exc)
+
+    return {
+        "meeting_id": meeting_id,
+        "source": "none",
+        "conference_record": None,
+        "participants": [],
+        "message": "No participant data available from Google Meet API or DOM fallback.",
+    }
+
+
+@app.get("/api/meetings/{meeting_id}/speakers")
+def get_meeting_speakers_endpoint(meeting_id: str) -> dict[str, Any]:
+    """Retrieve speaker mapping, participant roster, diarized speakers, resolved names, and confidence."""
+    rec_dir = DEFAULT_RECORDINGS_DIR / meeting_id
+    if not rec_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Recording data for meeting {meeting_id} not found")
+
+    # 1. Caption availability
+    captions_file = rec_dir / "captions.json"
+    captions_available = False
+    if captions_file.exists():
+        try:
+            c_data = json.loads(captions_file.read_text(encoding="utf-8"))
+            captions_available = bool(c_data.get("captions_available", False))
+        except Exception:
+            pass
+
+    # 2. Participants
+    participants_file = rec_dir / "participants.json"
+    participants: list[Any] = []
+    if participants_file.exists():
+        try:
+            p_data = json.loads(participants_file.read_text(encoding="utf-8"))
+            if isinstance(p_data, dict):
+                participants = p_data.get("participants", [])
+            elif isinstance(p_data, list):
+                participants = p_data
+        except Exception:
+            pass
+
+    # 3. Diarized speakers from speakers.json
+    speakers_file = rec_dir / "speakers.json"
+    diarized_speakers: list[str] = []
+    if speakers_file.exists():
+        try:
+            s_data = json.loads(speakers_file.read_text(encoding="utf-8"))
+            diarized_speakers = sorted(list(set(
+                t.get("speaker") for t in s_data.get("speaker_turns", []) if t.get("speaker")
+            )))
+        except Exception:
+            pass
+
+    # 4. Speaker mapping details
+    mapping_file = rec_dir / "speaker_mapping.json"
+    speakers_list: list[dict[str, Any]] = []
+    if mapping_file.exists():
+        try:
+            m_data = json.loads(mapping_file.read_text(encoding="utf-8"))
+            speakers_list = m_data.get("speakers", [])
+        except Exception:
+            pass
+
+    # Fallback to final.json if speaker_mapping.json does not exist
+    if not speakers_list:
+        final_file = rec_dir / "final.json"
+        if final_file.exists():
+            try:
+                f_data = json.loads(final_file.read_text(encoding="utf-8"))
+                seen = set()
+                for turn in f_data.get("turns", []):
+                    spk_id = turn.get("speaker_id") or turn.get("speaker")
+                    if spk_id and spk_id not in seen:
+                        seen.add(spk_id)
+                        name = turn.get("speaker")
+                        speakers_list.append({
+                            "speaker_id": spk_id,
+                            "name": name,
+                            "confidence": turn.get("confidence", 0.0) or (1.0 if name != spk_id else 0.0),
+                            "source": "final_transcript",
+                        })
+            except Exception:
+                pass
+
+    return {
+        "meeting_id": meeting_id,
+        "captions_available": captions_available,
+        "participants": participants,
+        "diarized_speakers": diarized_speakers,
+        "speakers": speakers_list,
+    }
+

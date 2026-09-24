@@ -1,0 +1,15 @@
+[Unit]
+Description=X Virtual Frame Buffer for Meet Recorder
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStartPre=+/bin/mount -o remount,rw /tmp/.X11-unix
+ExecStartPre=/bin/sh -c 'rm -f /tmp/.X99-lock /tmp/.X11-unix/X99'
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

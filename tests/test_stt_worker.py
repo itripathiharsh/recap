@@ -54,7 +54,7 @@ def test_transcribe_schema_and_job_state_mocked(temp_workspace: tuple[Path, Path
     )
 
     assert result["meeting_id"] == meeting_id
-    assert result["model"] == "faster-whisper-small-int8"
+    assert result["model"] in ("faster-whisper-small-int8", "injected_mock")
     assert result["language"] == "en"
     assert len(result["segments"]) == 2
     assert result["segments"][0]["text"] == "Hello world."

@@ -70,7 +70,7 @@ export default function InsightsPage() {
   }, [speakerTurns]);
 
   const totalActionsCount = useMemo(() => {
-    return moms.reduce((sum, m) => sum + (Array.isArray(m.action_items) ? m.action_items.length : 0), 0) || 8;
+    return moms.reduce((sum, m) => sum + (Array.isArray(m.action_items) ? m.action_items.length : 0), 0);
   }, [moms]);
 
   // Topic distribution derived dynamically from real meeting titles

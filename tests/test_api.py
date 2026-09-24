@@ -38,6 +38,24 @@ def test_worker_heartbeat() -> None:
     assert status_data["current_meeting"] == "test-sync-123"
 
 
+def _cleanup_test_meeting(meeting_id: str) -> None:
+    client.delete(f"/api/meetings/{meeting_id}")
+    try:
+        from src.supabase_client import get_supabase_client
+        sb = get_supabase_client()
+        if sb:
+            sb.table("meetings").delete().eq("id", meeting_id).execute()
+    except Exception:
+        pass
+    try:
+        from pathlib import Path
+        jf = Path(f"data/jobs/{meeting_id}.json")
+        if jf.exists():
+            jf.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def test_create_and_get_meeting() -> None:
     """Verify creating a meeting and retrieving it via API."""
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -53,16 +71,19 @@ def test_create_and_get_meeting() -> None:
     assert "id" in meeting_data
     meeting_id = meeting_data["id"]
 
-    # Get details
-    get_resp = client.get(f"/api/meetings/{meeting_id}")
-    assert get_resp.status_code == 200
-    assert get_resp.json()["title"] == "API Test Sync"
-    assert get_resp.json()["meet_link"] == "https://meet.google.com/abc-defg-hij"
+    try:
+        # Get details
+        get_resp = client.get(f"/api/meetings/{meeting_id}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["title"] == "API Test Sync"
+        assert get_resp.json()["meet_link"] == "https://meet.google.com/abc-defg-hij"
 
-    # List
-    list_resp = client.get("/api/meetings")
-    assert list_resp.status_code == 200
-    assert any(m["id"] == meeting_id for m in list_resp.json())
+        # List
+        list_resp = client.get("/api/meetings")
+        assert list_resp.status_code == 200
+        assert any(m["id"] == meeting_id for m in list_resp.json())
+    finally:
+        _cleanup_test_meeting(meeting_id)
 
 
 def test_cancel_meeting() -> None:
@@ -79,9 +100,12 @@ def test_cancel_meeting() -> None:
     )
     meeting_id = create_resp.json()["id"]
 
-    cancel_resp = client.post(f"/api/meetings/{meeting_id}/cancel")
-    assert cancel_resp.status_code == 200
+    try:
+        cancel_resp = client.post(f"/api/meetings/{meeting_id}/cancel")
+        assert cancel_resp.status_code == 200
 
-    status_resp = client.get(f"/api/meetings/{meeting_id}/status")
-    assert status_resp.status_code == 200
-    assert status_resp.json()["status"] == "cancelled"
+        status_resp = client.get(f"/api/meetings/{meeting_id}/status")
+        assert status_resp.status_code == 200
+        assert status_resp.json()["status"] == "cancelled"
+    finally:
+        _cleanup_test_meeting(meeting_id)

@@ -1,15 +1,17 @@
 [Unit]
-Description=Meeting Recorder Worker Daemon
-After=network.target sound.target
+Description=Recap Meeting Recorder Worker Daemon
+After=network.target sound.target xvfb.service
+Wants=xvfb.service
 
 [Service]
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/meet-recorder
 EnvironmentFile=/home/ubuntu/meet-recorder/.env
-Environment="PULSE_SERVER=unix:/run/user/1000/pulse/native"
+Environment="PULSE_SERVER=unix:/mnt/wslg/PulseServer"
 Environment="DISPLAY=:99"
-ExecStartPre=/bin/sh -c 'pgrep -x Xvfb > /dev/null || Xvfb :99 -screen 0 1920x1080x24 &'
+Environment="PLAYWRIGHT_BROWSERS_PATH=/home/ubuntu/meet-recorder/.temp/ms-playwright"
+Environment="PYTHONUNBUFFERED=1"
 ExecStart=/home/ubuntu/meet-recorder/.venv/bin/python3 -m src.scheduler
 Restart=always
 RestartSec=10

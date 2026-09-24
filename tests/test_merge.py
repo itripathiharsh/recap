@@ -60,6 +60,7 @@ def test_merge_sample_matches_final_fixture(fixtures_dir: Path, temp_workspace: 
         meeting_id=meeting_id,
         recordings_dir=recordings_dir,
         jobs_dir=jobs_dir,
+        resolve_speakers=False,
     )
 
     # Compare against final.sample.json

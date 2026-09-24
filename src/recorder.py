@@ -5,7 +5,7 @@ data/recordings/{meeting_id}/audio.wav. Monitors meeting duration, silence
 intervals, and bot removal status in real-time.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -232,6 +232,7 @@ def start_recording(
             logger.warning("Could not verify/load VirtualSink module: %s", p_err)
 
     start_time = time.time()
+    recording_start_monotonic = time.monotonic()
     speech_detected = False
     stop_reason: str | None = None
     silence_start_time: float | None = None
@@ -247,6 +248,21 @@ def start_recording(
         bufsize=1,
         env=env,
     )
+
+    # Initialize live closed captions observer if Playwright page is present
+    caption_collector = None
+    if page is not None:
+        try:
+            from src.caption_observer import enable_live_captions, start_caption_observer
+            enable_live_captions(page)
+            caption_collector = start_caption_observer(
+                page=page,
+                meeting_id=meeting_id,
+                recording_start_monotonic=recording_start_monotonic,
+                recordings_dir=recordings_dir or DEFAULT_RECORDINGS_DIR,
+            )
+        except Exception as cap_err:
+            logger.warning("Could not initialize live captions for %s: %s", meeting_id, cap_err)
 
     def monitor_stderr() -> None:
         nonlocal speech_detected, stop_reason, silence_start_time, last_silence_end, stderr_lines
@@ -317,7 +333,7 @@ def start_recording(
                 if current_silence_dur >= SILENCE_TIMEOUT_SECONDS:
                     stop_reason = f"silence_timeout ({current_silence_dur:.1f}s)"
                     logger.info("Active silence exceeded %.1fs threshold.", SILENCE_TIMEOUT_SECONDS)
-            # 5. Periodically scan for participant names from the Meet DOM (every 10s)
+            # 5. Periodically scan for participant names from the Meet DOM (every 10s) as fallback
             if page and (time.time() - last_participant_scan > 10.0):
                 last_participant_scan = time.time()
                 try:
@@ -326,11 +342,32 @@ def start_recording(
                         prev_count = len(discovered_participants)
                         discovered_participants.update(new_names)
                         if len(discovered_participants) > prev_count:
-                            logger.info("Discovered meeting participants: %s", sorted(list(discovered_participants)))
-                            participants_file.write_text(
-                                json.dumps(sorted(list(discovered_participants)), indent=2),
-                                encoding="utf-8"
-                            )
+                            # Do not overwrite if richer google_meet_api participants were already saved
+                            should_write = True
+                            if participants_file.exists():
+                                try:
+                                    existing = json.loads(participants_file.read_text(encoding="utf-8"))
+                                    if isinstance(existing, dict) and existing.get("source") == "google_meet_api":
+                                        should_write = False
+                                except Exception:
+                                    pass
+
+                            if should_write:
+                                logger.info("Discovered meeting participants (DOM fallback): %s", sorted(list(discovered_participants)))
+                                fallback_payload = {
+                                    "meeting_id": meeting_id,
+                                    "source": "dom_fallback",
+                                    "conference_record": None,
+                                    "retrieved_at": datetime.now(timezone.utc).isoformat() if "timezone" in globals() else datetime.utcnow().isoformat(),
+                                    "participants": [
+                                        {"displayName": name, "user_type": "unknown", "source": "dom_fallback"}
+                                        for name in sorted(list(discovered_participants))
+                                    ],
+                                }
+                                participants_file.write_text(
+                                    json.dumps(fallback_payload, indent=2),
+                                    encoding="utf-8"
+                                )
                 except Exception as exc:
                     logger.debug("Error during participant scan: %s", exc)
 
@@ -355,6 +392,13 @@ def start_recording(
             if stop_reason is None:
                 stop_reason = f"ffmpeg_process_exited (code={process.returncode})"
                 logger.error("FFmpeg exited early with code %s. Last stderr:\n%s", process.returncode, "\n".join(stderr_lines[-20:]))
+
+        # Stop and finalize live caption collector
+        if caption_collector is not None:
+            try:
+                caption_collector.save()
+            except Exception as cap_save_err:
+                logger.warning("Error finalizing captions for %s: %s", meeting_id, cap_save_err)
 
     logger.info("Recording finished for %s. Reason: %s", meeting_id, stop_reason)
 

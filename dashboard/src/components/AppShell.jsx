@@ -59,6 +59,10 @@ export default function AppShell({ children }) {
     return <>{children}</>;
   }
 
+  if (pathname === '/calendar/connect') {
+    return <>{children}</>;
+  }
+
   // If loading session for a protected route, show clean loading state
   if (loading) {
     return (

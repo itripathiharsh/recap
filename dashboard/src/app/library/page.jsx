@@ -27,14 +27,14 @@ import TopHeader from '../../components/TopHeader';
 export default function LibraryPage() {
   const [meetings, setMeetings] = useState([]);
   const [moms, setMoms] = useState([]);
-  const [transcriptsCount, setTranscriptsCount] = useState(2);
+  const [transcriptsCount, setTranscriptsCount] = useState(0);
   const [speakerTurns, setSpeakerTurns] = useState({});
   const [diskUsage, setDiskUsage] = useState({
-    usedMb: '37.0',
-    usedGb: '0.04',
+    usedMb: '0.0',
+    usedGb: '0.00',
     totalGb: '1.0',
-    pct: 3.7,
-    fileCount: 3,
+    pct: 0,
+    fileCount: 0,
     isSupabase: true,
   });
   const [loading, setLoading] = useState(true);

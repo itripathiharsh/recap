@@ -117,9 +117,32 @@ def test_execute_meeting_pipeline_success(
     fake_audio = tmp_path / "audio.wav"
     fake_audio.write_text("fake audio")
     mock_join.return_value = fake_audio
-    mock_transcribe.return_value = {"segments": [{"text": "Hello world"}], "language": "en"}
-    mock_diarize.return_value = {"speaker_turns": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.5}]}
-    mock_merge.return_value = {"turns": [{"speaker": "SPEAKER_00", "text": "Hello world"}]}
+    mock_transcribe.return_value = {
+        "segments": [
+            {
+                "start": 0.0,
+                "end": 30.0,
+                "text": "Hello world everyone, let's get started with our quarterly sync meeting and review priorities across all engineering and product teams for this quarter.",
+            },
+            {
+                "start": 30.5,
+                "end": 50.0,
+                "text": "We have several major milestones to discuss including API integration, testing coverage, and deployment timelines.",
+            },
+        ],
+        "language": "en",
+    }
+    mock_diarize.return_value = {"speaker_turns": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 50.0}]}
+    mock_merge.return_value = {
+        "turns": [
+            {
+                "speaker": "SPEAKER_00",
+                "start": 0.0,
+                "end": 50.0,
+                "text": "Hello world everyone, let's get started with our quarterly sync meeting and review priorities across all engineering and product teams for this quarter. We have several major milestones to discuss including API integration, testing coverage, and deployment timelines.",
+            }
+        ]
+    }
     mock_gen_mom.return_value = {"summary": "Great meeting", "decisions": [], "action_items": []}
     mock_deliver.return_value = {"status": "delivered"}
 

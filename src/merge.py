@@ -33,6 +33,9 @@ class Turn(BaseModel):
     start: float = Field(..., ge=0.0)
     end: float = Field(..., ge=0.0)
     text: str
+    speaker_id: str | None = None
+    resolved_name: str | None = None
+    confidence: float | None = None
 
 
 class FinalTranscript(BaseModel):
@@ -104,6 +107,7 @@ def merge_transcript_and_speakers(
     recordings_dir: Path | None = None,
     jobs_dir: Path | None = None,
     force: bool = False,
+    resolve_speakers: bool = True,
 ) -> dict[str, Any]:
     """Combine transcript.json and speakers.json into final.json.
 
@@ -233,11 +237,16 @@ def merge_transcript_and_speakers(
             })
 
     # Resolve generic speaker tags (SPEAKER_00, etc.) to real participant names
-    try:
-        from src.speaker_resolver import resolve_speaker_names
-        turns, _ = resolve_speaker_names(turns, meeting_id=meeting_id)
-    except Exception as exc:
-        logger.warning("Speaker resolution skipped: %s", exc)
+    if resolve_speakers:
+        try:
+            from src.speaker_resolver import resolve_speaker_names
+            turns, _ = resolve_speaker_names(
+                turns,
+                meeting_id=meeting_id,
+                recordings_dir=recordings_dir,
+            )
+        except Exception as exc:
+            logger.warning("Speaker resolution skipped: %s", exc)
 
     final_payload = {
         "meeting_id": meeting_id,
@@ -255,7 +264,7 @@ def merge_transcript_and_speakers(
     rec_dir.mkdir(parents=True, exist_ok=True)
     temp_final = final_path.with_suffix(".json.tmp")
     with open(temp_final, "w", encoding="utf-8") as f:
-        json.dump(validated.model_dump(), f, indent=2)
+        json.dump(validated.model_dump(exclude_none=True), f, indent=2)
     temp_final.replace(final_path)
 
     logger.info("Successfully wrote final.json for meeting %s with %d turns", meeting_id, len(turns))
@@ -266,4 +275,4 @@ def merge_transcript_and_speakers(
     except Exception as exc:
         logger.warning("Could not update job status for %s to 'merged': %s", meeting_id, exc)
 
-    return validated.model_dump()
+    return validated.model_dump(exclude_none=True)
