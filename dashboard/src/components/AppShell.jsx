@@ -13,18 +13,14 @@ export default function AppShell({ children }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const isPublicRoute = pathname === '/' || pathname === '/login';
+  const isPublicRoute = pathname === '/' || pathname === '/login' || pathname === '/calendar/connect';
 
   useEffect(() => {
-    // Initial session check
+    // Initial session check once on mount
     async function getInitialSession() {
       try {
         const { data } = await supabase.auth.getSession();
         setSession(data?.session || null);
-
-        if (!data?.session && !isPublicRoute) {
-          router.replace(`/login?redirectTo=${encodeURIComponent(pathname)}`);
-        }
       } catch (err) {
         console.error('AppShell session check error:', err);
       } finally {
@@ -48,7 +44,14 @@ export default function AppShell({ children }) {
     return () => {
       authListener?.subscription?.unsubscribe();
     };
-  }, [pathname, isPublicRoute, router]);
+  }, []);
+
+  // Protect private routes in-memory without re-requesting network session
+  useEffect(() => {
+    if (!loading && !session && !isPublicRoute) {
+      router.replace(`/login?redirectTo=${encodeURIComponent(pathname)}`);
+    }
+  }, [loading, session, pathname, isPublicRoute, router]);
 
   // Landing page and Login page render without app chrome
   if (pathname === '/') {

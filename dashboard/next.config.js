@@ -7,17 +7,10 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  headers: async () => [
-    {
-      source: '/:path*',
-      headers: [
-        {
-          key: 'Cache-Control',
-          value: 'no-cache, no-store, max-age=0, must-revalidate',
-        },
-      ],
-    },
-  ],
+  // Allow Next.js built-in optimal caching for static chunks and assets
+  images: {
+    formats: ['image/avif', 'image/webp'],
+  },
 };
 
 module.exports = nextConfig;

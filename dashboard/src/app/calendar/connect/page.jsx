@@ -26,12 +26,11 @@ export default function CalendarConnectPage() {
           {/* Main Visual Image */}
           <div className="calendar-connect-img-wrap">
             <Image
-              src="/calendar-out-of-budget.png"
+              src="/calendar-out-of-budget-2x.webp"
               alt="Developer is out of budget — Calendar integration temporarily unavailable"
               width={1024}
               height={682}
               priority
-              unoptimized
               className="calendar-connect-img"
             />
 
