@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -89,7 +89,8 @@ function formatMeetingDate(dateStr) {
 }
 
 function formatDuration(minutes) {
-  const mins = Math.max(1, Math.round(Number(minutes) || 0));
+  const mins = Math.max(0, Math.round(Number(minutes) || 0));
+  if (mins === 0) return '0m';
   if (mins < 60) return `${mins}m`;
   const h = Math.floor(mins / 60);
   const m = mins % 60;
@@ -113,7 +114,7 @@ function formatRelativeTime(dateStr) {
 
 export default function OrganisationOverviewPage() {
   const router = useRouter();
-  const { activeOrgId, activeWorkspace, activeOrgRole, session } = useWorkspace();
+  const { activeOrgId, activeWorkspace, session } = useWorkspace();
 
   const [organisation, setOrganisation] = useState(null);
   const [members, setMembers] = useState([]);
@@ -136,9 +137,6 @@ export default function OrganisationOverviewPage() {
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
-
-  // Row menu state
-  const [activeMenuMemberId, setActiveMenuMemberId] = useState(null);
 
   const currentUserEmail = (session?.user?.email || '').toLowerCase();
   const currentUserId = session?.user?.id || null;
@@ -219,48 +217,85 @@ export default function OrganisationOverviewPage() {
     loadData();
   }, [activeOrgId]);
 
-  // Aggregate metrics calculation
+  // Aggregate metrics calculation (strictly from backend data)
   const metrics = useMemo(() => {
     const totalMeetings = meetings.length;
-    const activeMembers = members.filter((m) => m.status === 'active').length || members.length;
-    
-    // Total meeting duration in minutes
+    const completedMeetings = meetings.filter((m) => m.status === 'completed').length;
+    const activeMembers = members.filter((m) => m.status === 'active').length;
+
     let totalMinutes = 0;
     meetings.forEach((m) => {
       if (m.started_at && m.ended_at) {
         const diff = Math.round((new Date(m.ended_at) - new Date(m.started_at)) / 60000);
-        totalMinutes += diff > 0 ? diff : (m.expected_duration_minutes || 30);
-      } else {
+        totalMinutes += diff > 0 ? diff : (m.expected_duration_minutes || 0);
+      } else if (m.status === 'completed') {
         totalMinutes += m.expected_duration_minutes || 30;
       }
     });
 
     const hours = Math.floor(totalMinutes / 60);
     const mins = totalMinutes % 60;
-    const meetingTimeFormatted = `${hours}h ${mins}m`;
+    const meetingTimeFormatted = totalMinutes > 0 ? (hours > 0 ? `${hours}h ${mins}m` : `${mins}m`) : '0h 0m';
 
-    // Total action items from MOMs
     const actionItemsCount = moms.reduce(
       (sum, m) => sum + (Array.isArray(m.action_items) ? m.action_items.length : 0),
       0
     );
 
     return {
-      totalMeetings: totalMeetings > 0 ? totalMeetings : 124,
-      activeMembers: activeMembers > 0 ? activeMembers : 8,
-      meetingTime: totalMinutes > 0 ? meetingTimeFormatted : '42h 18m',
-      actionItems: actionItemsCount > 0 ? actionItemsCount : 96,
+      totalMeetings,
+      completedMeetings,
+      activeMembers: activeMembers > 0 ? activeMembers : members.length,
+      meetingTime: meetingTimeFormatted,
+      actionItems: actionItemsCount,
     };
   }, [meetings, members, moms]);
 
-  // Meeting Activity Chart Data Generator (daily counts over selected window)
+  // Dynamic real trends calculation
+  const trends = useMemo(() => {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+
+    const meetingsThisMonth = meetings.filter((m) => {
+      const d = new Date(m.scheduled_start || m.started_at || m.created_at);
+      return d >= thirtyDaysAgo && d <= now;
+    }).length;
+
+    const meetingsPrevMonth = meetings.filter((m) => {
+      const d = new Date(m.scheduled_start || m.started_at || m.created_at);
+      return d >= sixtyDaysAgo && d < thirtyDaysAgo;
+    }).length;
+
+    let meetingsTrendText = '';
+    if (meetingsPrevMonth > 0) {
+      const pct = Math.round(((meetingsThisMonth - meetingsPrevMonth) / meetingsPrevMonth) * 100);
+      meetingsTrendText = pct >= 0 ? `+${pct}% from last month` : `${pct}% from last month`;
+    } else if (meetingsThisMonth > 0) {
+      meetingsTrendText = `${meetingsThisMonth} this month`;
+    } else {
+      meetingsTrendText = '0 this month';
+    }
+
+    const newMembersThisMonth = members.filter((m) => {
+      const d = new Date(m.created_at);
+      return d >= thirtyDaysAgo;
+    }).length;
+    const membersTrendText = newMembersThisMonth > 0 ? `+${newMembersThisMonth} new this month` : 'All time active';
+
+    return {
+      meetings: meetingsTrendText,
+      members: membersTrendText,
+    };
+  }, [meetings, members]);
+
+  // Meeting Activity Chart Data Generator (strictly from DB meetings)
   const chartData = useMemo(() => {
     const days = activityRange;
     const now = new Date();
     const buckets = [];
     const dateMap = new Map();
 
-    // Generate buckets for each day
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
@@ -272,7 +307,6 @@ export default function OrganisationOverviewPage() {
       buckets.push(key);
     }
 
-    // Populate counts from meetings
     meetings.forEach((m) => {
       const dateKey = (m.started_at || m.scheduled_start || m.created_at || '').split('T')[0];
       if (dateMap.has(dateKey)) {
@@ -281,13 +315,13 @@ export default function OrganisationOverviewPage() {
     });
 
     const items = buckets.map((k) => dateMap.get(k));
-
-    // Dynamic mock activity fill for visual fidelity if sparse demo
-    const maxCount = Math.max(16, ...items.map((i) => i.count));
+    const highestCount = Math.max(0, ...items.map((i) => i.count));
+    const maxScale = Math.max(5, Math.ceil(highestCount / 5) * 5);
 
     return {
       items,
-      maxCount: Math.ceil(maxCount / 5) * 5, // round up to nearest 5
+      maxScale,
+      hasData: highestCount > 0,
     };
   }, [meetings, activityRange]);
 
@@ -298,7 +332,6 @@ export default function OrganisationOverviewPage() {
         p_invitation_id: invitationId,
       });
       if (error) {
-        // If RPC isn't signed by same user email, fallback update status
         await supabase
           .from('organisation_invitations')
           .update({ status: 'accepted' })
@@ -365,17 +398,15 @@ export default function OrganisationOverviewPage() {
     }
   };
 
-  // 5 Recent meetings
   const recentMeetings = useMemo(() => {
     return meetings.slice(0, 5);
   }, [meetings]);
 
-  // 5 Displayed team members
   const displayedMembers = useMemo(() => {
     return members.slice(0, 5);
   }, [members]);
 
-  const orgName = organisation?.name || activeWorkspace?.name || 'Sentio Mind';
+  const orgName = organisation?.name || activeWorkspace?.name || 'Organisation Workspace';
   const orgDescription =
     organisation?.description ||
     (orgName === 'Sentio Mind'
@@ -464,7 +495,7 @@ export default function OrganisationOverviewPage() {
             </div>
             <div className="org-metric-trend">
               <TrendingUp size={14} aria-hidden="true" />
-              <span>+18% from last month</span>
+              <span>{trends.meetings}</span>
             </div>
           </div>
 
@@ -481,7 +512,7 @@ export default function OrganisationOverviewPage() {
             </div>
             <div className="org-metric-trend">
               <TrendingUp size={14} aria-hidden="true" />
-              <span>+2 new this month</span>
+              <span>{trends.members}</span>
             </div>
           </div>
 
@@ -498,7 +529,7 @@ export default function OrganisationOverviewPage() {
             </div>
             <div className="org-metric-trend">
               <TrendingUp size={14} aria-hidden="true" />
-              <span>+26% from last month</span>
+              <span>{metrics.completedMeetings} completed</span>
             </div>
           </div>
 
@@ -515,7 +546,7 @@ export default function OrganisationOverviewPage() {
             </div>
             <div className="org-metric-trend">
               <TrendingUp size={14} aria-hidden="true" />
-              <span>+12% from last month</span>
+              <span>From meeting MOMs</span>
             </div>
           </div>
         </section>
@@ -573,8 +604,14 @@ export default function OrganisationOverviewPage() {
             {/* Interactive Vertical Bar Chart */}
             <div className="org-chart-wrapper">
               {/* Y Axis Guide Lines & Labels */}
-              {[20, 15, 10, 5, 0].map((val) => {
-                const bottomPercent = (val / 20) * 160 + 26;
+              {[
+                chartData.maxScale,
+                Math.round(chartData.maxScale * 0.75),
+                Math.round(chartData.maxScale * 0.5),
+                Math.round(chartData.maxScale * 0.25),
+                0,
+              ].map((val) => {
+                const bottomPercent = (val / chartData.maxScale) * 160 + 26;
                 return (
                   <div
                     key={val}
@@ -585,31 +622,24 @@ export default function OrganisationOverviewPage() {
               })}
 
               <div className="org-chart-y-axis">
-                <span>20</span>
-                <span>15</span>
-                <span>10</span>
-                <span>5</span>
+                <span>{chartData.maxScale}</span>
+                <span>{Math.round(chartData.maxScale * 0.75)}</span>
+                <span>{Math.round(chartData.maxScale * 0.5)}</span>
+                <span>{Math.round(chartData.maxScale * 0.25)}</span>
                 <span>0</span>
               </div>
 
               {/* Bars container */}
               <div className="org-chart-bars-container">
-                {chartData.items.map((item, idx) => {
-                  // Fallback visual height for screenshot parity if meeting count is zero in early test
-                  const baselineCount = item.count;
-                  // If real count is 0, give slight rhythm for days matching screenshot
-                  const visualCount =
-                    baselineCount > 0
-                      ? baselineCount
-                      : (idx % 3 === 0 ? (idx % 7 === 0 ? 14 : 7) : (idx % 5 === 0 ? 4 : (idx % 2 === 0 ? 2 : 1)));
-                  
-                  const heightPercent = Math.min(100, Math.max(6, (visualCount / 20) * 100));
+                {chartData.items.map((item) => {
+                  const heightPercent =
+                    item.count > 0 ? Math.min(100, Math.max(6, (item.count / chartData.maxScale) * 100)) : 0;
 
                   return (
                     <div
                       key={item.date}
                       className="org-chart-bar-col"
-                      onMouseEnter={() => setHoveredBar({ ...item, visualCount })}
+                      onMouseEnter={() => setHoveredBar(item)}
                       onMouseLeave={() => setHoveredBar(null)}
                     >
                       {/* Tooltip */}
@@ -617,7 +647,7 @@ export default function OrganisationOverviewPage() {
                         <div
                           style={{
                             position: 'absolute',
-                            bottom: `calc(${heightPercent}% + 8px)`,
+                            bottom: `calc(${Math.max(10, heightPercent)}% + 8px)`,
                             backgroundColor: '#0F172A',
                             color: '#FFFFFF',
                             fontSize: '11px',
@@ -630,32 +660,33 @@ export default function OrganisationOverviewPage() {
                             boxShadow: '0 4px 10px rgba(0,0,0,0.15)',
                           }}
                         >
-                          {item.label}: {item.count} meetings
+                          {item.label}: {item.count} {item.count === 1 ? 'meeting' : 'meetings'}
                         </div>
                       )}
 
                       <div
                         className="org-chart-bar"
-                        style={{ height: `${heightPercent}%` }}
+                        style={{
+                          height: item.count > 0 ? `${heightPercent}%` : '2px',
+                          backgroundColor: item.count > 0 ? '#3B82F6' : '#E2E8F0',
+                        }}
                       />
                     </div>
                   );
                 })}
               </div>
 
-              {/* X Axis Labels */}
+              {/* Dynamic X Axis Labels */}
               <div className="org-chart-x-axis">
-                <span>Aug 26</span>
-                <span>Aug 29</span>
-                <span>Sep 1</span>
-                <span>Sep 4</span>
-                <span>Sep 7</span>
-                <span>Sep 10</span>
-                <span>Sep 13</span>
-                <span>Sep 16</span>
-                <span>Sep 19</span>
-                <span>Sep 22</span>
-                <span>Sep 25</span>
+                {chartData.items
+                  .filter(
+                    (_, idx) =>
+                      idx % Math.ceil(chartData.items.length / 8) === 0 ||
+                      idx === chartData.items.length - 1
+                  )
+                  .map((item) => (
+                    <span key={item.date}>{item.label}</span>
+                  ))}
               </div>
             </div>
           </div>
@@ -768,11 +799,6 @@ export default function OrganisationOverviewPage() {
                   ) : (
                     recentMeetings.map((m) => {
                       const meetSpeakers = Array.from(speakerTurns[m.id] || []);
-                      // Fallback visual participants if turns haven't finished processing
-                      const displayedSpeakers =
-                        meetSpeakers.length > 0
-                          ? meetSpeakers
-                          : ['Harsh', 'Aparna', 'Mohit'];
 
                       const durationFormatted = formatDuration(
                         m.expected_duration_minutes ||
@@ -814,26 +840,30 @@ export default function OrganisationOverviewPage() {
 
                           {/* Participants Avatar Stack */}
                           <td>
-                            <div className="org-avatar-stack">
-                              {displayedSpeakers.slice(0, 3).map((speaker, sIdx) => {
-                                const colors = AVATAR_PALETTES[sIdx % AVATAR_PALETTES.length];
-                                return (
-                                  <div
-                                    key={speaker + sIdx}
-                                    className="org-avatar-stack-item"
-                                    style={{ backgroundColor: colors.text }}
-                                    title={speaker}
-                                  >
-                                    {speaker[0]?.toUpperCase() || 'U'}
+                            {meetSpeakers.length === 0 ? (
+                              <span style={{ color: '#94A3B8', fontSize: '12px' }}>—</span>
+                            ) : (
+                              <div className="org-avatar-stack">
+                                {meetSpeakers.slice(0, 3).map((speaker, sIdx) => {
+                                  const colors = AVATAR_PALETTES[sIdx % AVATAR_PALETTES.length];
+                                  return (
+                                    <div
+                                      key={speaker + sIdx}
+                                      className="org-avatar-stack-item"
+                                      style={{ backgroundColor: colors.text }}
+                                      title={speaker}
+                                    >
+                                      {speaker[0]?.toUpperCase() || 'U'}
+                                    </div>
+                                  );
+                                })}
+                                {meetSpeakers.length > 3 && (
+                                  <div className="org-avatar-stack-more">
+                                    +{meetSpeakers.length - 3}
                                   </div>
-                                );
-                              })}
-                              {displayedSpeakers.length >= 3 && (
-                                <div className="org-avatar-stack-more">
-                                  +{displayedSpeakers.length > 3 ? displayedSpeakers.length - 3 : 2}
-                                </div>
-                              )}
-                            </div>
+                                )}
+                              </div>
+                            )}
                           </td>
 
                           {/* Duration */}
