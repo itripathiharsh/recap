@@ -5626,3 +5626,351 @@ kbd {
   color: #64748B;
   margin-top: 1px;
 }
+
+/* ==========================================================================
+   Organisation Meetings Page (Split View & Detail Panel)
+   ========================================================================== */
+
+.org-meetings-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.85fr) minmax(330px, 1.15fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .org-meetings-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.org-meetings-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.org-filter-search-wrap {
+  flex: 1;
+  min-width: 200px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.org-filter-search-input {
+  width: 100%;
+  height: 38px;
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  padding: 0 12px 0 34px;
+  font-size: 13px;
+  color: #0F172A;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.org-filter-search-input:focus {
+  border-color: #0066FF;
+  box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.08);
+}
+
+.org-filter-select-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.org-filter-select {
+  appearance: none;
+  height: 38px;
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  padding: 0 28px 0 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.org-filter-select:hover,
+.org-filter-select:focus {
+  border-color: #CBD5E1;
+}
+
+.org-filter-date-btn {
+  height: 38px;
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  padding: 0 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #334155;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.org-filter-date-btn:hover {
+  background-color: #F8FAFC;
+  border-color: #CBD5E1;
+}
+
+/* Visibility Badges */
+.org-vis-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.org-vis-badge.organisation {
+  background-color: #EFF6FF;
+  color: #1D4ED8;
+}
+
+.org-vis-badge.participants {
+  background-color: #F5F3FF;
+  color: #7E22CE;
+}
+
+.org-vis-badge.private {
+  background-color: #FEF2F2;
+  color: #B91C1C;
+}
+
+/* Selected row highlight */
+.org-table-row {
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.org-table-row:hover {
+  background-color: #F8FAFC;
+}
+
+.org-table-row.selected {
+  background-color: #F0F7FF;
+}
+
+/* Meeting Detail Panel */
+.org-meet-detail-card {
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 14px;
+  padding: 20px 22px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.org-meet-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.org-meet-detail-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0F172A;
+  line-height: 1.3;
+}
+
+.org-meet-detail-meta {
+  font-size: 12px;
+  color: #64748B;
+  margin-top: 2px;
+}
+
+.org-meet-detail-tag {
+  font-size: 11.5px;
+  color: #94A3B8;
+  margin-top: 1px;
+}
+
+.org-meet-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid #E2E8F0;
+  margin-bottom: 18px;
+}
+
+.org-meet-tab-btn {
+  padding: 8px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #64748B;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.org-meet-tab-btn:hover {
+  color: #0F172A;
+}
+
+.org-meet-tab-btn.active {
+  color: #0066FF;
+  border-bottom-color: #0066FF;
+  font-weight: 600;
+}
+
+.org-meet-info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.org-meet-info-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.org-meet-info-icon-wrap {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background-color: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  color: #64748B;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.org-meet-info-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94A3B8;
+}
+
+.org-meet-info-val {
+  font-size: 13px;
+  font-weight: 500;
+  color: #0F172A;
+  margin-top: 2px;
+}
+
+.org-meet-btn-primary {
+  width: 100%;
+  padding: 10px 16px;
+  background-color: #0066FF;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+  transition: background-color 120ms ease;
+  margin-bottom: 12px;
+}
+
+.org-meet-btn-primary:hover {
+  background-color: #0052CC;
+}
+
+.org-meet-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.org-meet-quick-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.org-meet-quick-btn:hover {
+  background-color: #F8FAFC;
+  border-color: #CBD5E1;
+  color: #0F172A;
+}
+
+/* Pagination bar */
+.org-pagination-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 16px;
+  margin-top: 8px;
+  border-top: 1px solid #F1F5F9;
+  font-size: 12.5px;
+  color: #64748B;
+}
+
+.org-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.org-page-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.org-page-btn:hover:not(:disabled) {
+  background-color: #F1F5F9;
+  color: #0F172A;
+}
+
+.org-page-btn.active {
+  background-color: #0066FF;
+  color: #FFFFFF;
+  font-weight: 600;
+}
+
+.org-page-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
