@@ -11,7 +11,7 @@ import { useWorkspace } from '../lib/workspace';
  *   user to switch (or create) an organisation instead of rendering data.
  * - Renders the standard Recap page header, then the page body.
  */
-export default function OrganisationPage({ title, subtitle, children }) {
+export default function OrganisationPage({ title, subtitle, breadcrumb, actions, children }) {
   const { loading, isOrganisation, workspaces, switchWorkspace } =
     useWorkspace();
 
@@ -38,24 +38,69 @@ export default function OrganisationPage({ title, subtitle, children }) {
 
   return (
     <div>
-      <div style={{ marginBottom: '20px' }}>
-        <h1
+      {breadcrumb && (
+        <div
           style={{
-            fontSize: '22px',
-            fontWeight: 600,
-            color: 'var(--text-primary)',
-            marginBottom: '3px',
-            textWrap: 'balance',
+            fontSize: '13px',
+            color: '#64748B',
+            marginBottom: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontWeight: 500,
           }}
         >
-          {title}
-        </h1>
-        {subtitle && (
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textWrap: 'pretty' }}>
-            {subtitle}
-          </p>
-        )}
-      </div>
+          {breadcrumb}
+        </div>
+      )}
+
+      {(title || actions) && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: '16px',
+            marginBottom: '24px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            {title && (
+              <h1
+                style={{
+                  fontSize: '26px',
+                  fontWeight: 700,
+                  color: 'var(--text-primary)',
+                  letterSpacing: '-0.025em',
+                  marginBottom: '4px',
+                  textWrap: 'balance',
+                }}
+              >
+                {title}
+              </h1>
+            )}
+            {subtitle && (
+              <p
+                style={{
+                  fontSize: '13.5px',
+                  color: 'var(--text-secondary)',
+                  textWrap: 'pretty',
+                  maxWidth: '680px',
+                  lineHeight: 1.5,
+                }}
+              >
+                {subtitle}
+              </p>
+            )}
+          </div>
+          {actions && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              {actions}
+            </div>
+          )}
+        </div>
+      )}
 
       {!isOrganisation ? (
         <div className="surface-card" style={{ padding: '48px 24px', textAlign: 'center' }}>

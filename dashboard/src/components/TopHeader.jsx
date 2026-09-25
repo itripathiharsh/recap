@@ -16,15 +16,25 @@ import {
   Video,
   Clock,
   Sparkles,
+  HelpCircle,
+  ChevronDown,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { applyWorkspaceScope, useWorkspace } from '../lib/workspace';
 import AddMeetingModal from './AddMeetingModal';
 
+function getInitials(name) {
+  if (!name) return 'HV';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export default function TopHeader({
   searchQuery = '',
   onSearchChange,
-  placeholder = 'Search meetings, transcripts, topics, speakers...',
+  placeholder = 'Search meetings, transcripts, or insights...',
+  showScheduleButton = true,
 }) {
   const router = useRouter();
   const { activeOrgId } = useWorkspace();
@@ -160,13 +170,26 @@ export default function TopHeader({
         {/* Right Actions */}
         <div className="dashboard-topbar-actions">
           {/* Schedule Meeting Button */}
+          {showScheduleButton && (
+            <button
+              type="button"
+              className="btn-schedule-meeting"
+              onClick={() => setIsModalOpen(true)}
+            >
+              <Plus size={15} strokeWidth={2.5} aria-hidden="true" />
+              <span>Schedule Meeting</span>
+            </button>
+          )}
+
+          {/* Help Button */}
           <button
             type="button"
-            className="btn-schedule-meeting"
-            onClick={() => setIsModalOpen(true)}
+            className="topbar-icon-btn"
+            aria-label="Help and resources"
+            title="Help & Resources"
+            style={{ cursor: 'pointer' }}
           >
-            <Plus size={15} strokeWidth={2.5} aria-hidden="true" />
-            <span>Schedule Meeting</span>
+            <HelpCircle size={18} strokeWidth={1.8} color="#475569" />
           </button>
 
           {/* Notifications Button & Dropdown */}
@@ -354,14 +377,48 @@ export default function TopHeader({
                 setShowProfileMenu(!showProfileMenu);
                 setShowNotifications(false);
               }}
-              className="topbar-avatar-btn"
+              aria-label="User profile menu"
               title={userProfile.name}
               style={{
                 cursor: 'pointer',
-                border: showProfileMenu ? '2px solid #0066FF' : 'none',
+                border: showProfileMenu ? '1px solid #BFDBFE' : '1px solid #E2E8F0',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '3px 10px 3px 3px',
+                borderRadius: '24px',
+                backgroundColor: showProfileMenu ? '#EFF6FF' : '#FFFFFF',
+                transition: 'background-color 120ms ease, border-color 120ms ease',
               }}
             >
-              <span>{userProfile.name ? userProfile.name[0].toUpperCase() : 'H'}</span>
+              <div
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  backgroundColor: '#DBEAFE',
+                  color: '#1E40AF',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  letterSpacing: '0.02em',
+                }}
+              >
+                {getInitials(userProfile.name)}
+              </div>
+              <span
+                style={{
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#1E293B',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {userProfile.name || 'Harsh Vardhan'}
+              </span>
+              <ChevronDown size={14} color="#64748B" />
             </button>
 
             {/* Profile Dropdown Menu */}

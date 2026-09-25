@@ -140,12 +140,12 @@ export default function WorkspaceSwitcher() {
         aria-label="Switch workspace"
       >
         <span className={`workspace-switcher-avatar ${isOrganisation ? 'org' : ''}`} aria-hidden="true">
-          {isOrganisation ? <Building2 size={14} strokeWidth={2} /> : initials}
+          {isOrganisation ? (activeWorkspace?.name ? activeWorkspace.name[0].toUpperCase() : 'O') : initials}
         </span>
         <span className="workspace-switcher-label">
           <span className="workspace-switcher-name">{activeWorkspace.name}</span>
           <span className="workspace-switcher-type">
-            {isOrganisation ? 'Organisation' : 'Individual'}
+            {isOrganisation ? 'Organisation Workspace' : 'Personal Workspace'}
           </span>
         </span>
         <ChevronDown
