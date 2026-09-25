@@ -26,6 +26,7 @@ def collect_system_metrics(data_dir: Path | str = "data") -> dict[str, Any]:
     cpu_percent = 0.0
     try:
         import psutil
+
         cpu_percent = float(psutil.cpu_percent(interval=0.1))
     except Exception:
         try:
@@ -38,6 +39,7 @@ def collect_system_metrics(data_dir: Path | str = "data") -> dict[str, Any]:
     ram_percent = 0.0
     try:
         import psutil
+
         ram_percent = float(psutil.virtual_memory().percent)
     except Exception:
         try:
@@ -114,6 +116,11 @@ def send_heartbeat(
     target_api = api_url or os.getenv("FASTAPI_URL", "http://127.0.0.1:8000")
     try:
         import httpx
+
+        headers = {}
+        api_token = os.getenv("FASTAPI_AUTH_TOKEN", "").strip()
+        if api_token:
+            headers["X-Internal-Token"] = api_token
         with httpx.Client(timeout=2.0) as client:
             client.post(
                 f"{target_api}/api/worker/heartbeat",
@@ -123,6 +130,7 @@ def send_heartbeat(
                     "current_meeting_id": current_meeting_id,
                     "metrics": metrics,
                 },
+                headers=headers,
             )
     except Exception:
         # Expected if FastAPI is not running on the same host or port

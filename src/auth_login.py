@@ -53,8 +53,10 @@ def _start_xvfb_and_vnc() -> list[subprocess.Popen]:
     subprocess.run(["pkill", "-f", f"websockify.*{NOVNC_PORT}"], capture_output=True)
     time.sleep(0.5)
 
-    # 3. Start x11vnc
+    # 3. Start x11vnc (unset WAYLAND_DISPLAY so x11vnc attaches cleanly to Xvfb :99)
     logger.info("Starting x11vnc on port %d...", VNC_PORT)
+    vnc_env = os.environ.copy()
+    vnc_env.pop("WAYLAND_DISPLAY", None)
     vnc = subprocess.Popen([
         "x11vnc",
         "-display", DISPLAY,
@@ -63,7 +65,7 @@ def _start_xvfb_and_vnc() -> list[subprocess.Popen]:
         "-forever",
         "-shared",
         "-quiet",
-    ])
+    ], env=vnc_env)
     procs.append(vnc)
     time.sleep(1)
 

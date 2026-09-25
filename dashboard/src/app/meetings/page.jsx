@@ -28,11 +28,13 @@ import {
   Trash2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
 import AddMeetingModal from '../../components/AddMeetingModal';
 import TopHeader from '../../components/TopHeader';
 import ProcessingProgress from '../../components/ProcessingProgress';
 
 export default function MeetingsPage() {
+  const { activeOrgId } = useWorkspace();
   const [meetings, setMeetings] = useState([]);
   const [moms, setMoms] = useState({});
   const [speakerTurns, setSpeakerTurns] = useState({});
@@ -61,36 +63,40 @@ export default function MeetingsPage() {
   const fetchMeetingsData = async () => {
     try {
       setLoading(true);
-      // 1. Fetch meetings
-      const { data: meetData, error: meetErr } = await supabase
-        .from('meetings')
-        .select('*')
-        .order('scheduled_start', { ascending: false });
+      // 1. Fetch meetings (scoped to the active workspace)
+      const { data: meetData, error: meetErr } = await applyWorkspaceScope(
+        supabase.from('meetings').select('*'),
+        activeOrgId
+      ).order('scheduled_start', { ascending: false });
 
       if (meetErr) throw meetErr;
       const allMeetings = meetData || [];
       setMeetings(allMeetings);
 
+      const meetingIds = new Set(allMeetings.map((m) => m.id));
+
       if (allMeetings.length > 0 && !selectedMeetingId) {
         setSelectedMeetingId(allMeetings[0].id);
+      } else if (selectedMeetingId && !meetingIds.has(selectedMeetingId)) {
+        setSelectedMeetingId(allMeetings[0]?.id || null);
       }
 
-      // 2. Fetch MOMs
+      // 2. Fetch MOMs (scoped to those meetings)
       const { data: momData } = await supabase.from('mom').select('*');
       const momsMap = {};
-      (momData || []).forEach((m) => {
+      filterToMeetings(momData, meetingIds).forEach((m) => {
         momsMap[m.meeting_id] = m;
       });
       setMoms(momsMap);
 
-      // 3. Fetch Speaker Turns
+      // 3. Fetch Speaker Turns (scoped to those meetings)
       const { data: turnsData } = await supabase
         .from('speaker_turns')
         .select('*')
         .order('start_time', { ascending: true });
 
       const turnsMap = {};
-      (turnsData || []).forEach((t) => {
+      filterToMeetings(turnsData, meetingIds).forEach((t) => {
         if (!turnsMap[t.meeting_id]) {
           turnsMap[t.meeting_id] = [];
         }
@@ -116,7 +122,7 @@ export default function MeetingsPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [activeOrgId]);
 
   // Close dropdowns on outside click
   useEffect(() => {

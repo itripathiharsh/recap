@@ -123,8 +123,20 @@ def _extract_meet_participants(page: Any) -> list[str]:
 
                 return Array.from(participants);
             }""")
-            ignored = {"You", "Meeting details", "Chat with everyone", "People", "Activities", "Host controls"}
-            return [n for n in names if n and n not in ignored]
+            ignored = {
+                "You", "Meeting details", "Chat with everyone", "People", "Activities", "Host controls",
+                "Turn on microphone", "Turn off microphone", "Turn on camera", "Turn off camera",
+                "Backgrounds and effects", "Recap Recorder",
+            }
+            cleaned = []
+            for n in names:
+                if not n or len(n) > 40 or "\n" in n:
+                    continue
+                if any(kw.lower() in n.lower() for kw in ["background", "visual_effects", "can't show", "tile in this"]):
+                    continue
+                if n not in ignored and n not in cleaned:
+                    cleaned.append(n)
+            return cleaned
     except Exception as exc:
         logger.debug("Participant extraction error: %s", exc)
 

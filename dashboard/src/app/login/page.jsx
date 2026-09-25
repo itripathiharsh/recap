@@ -43,11 +43,11 @@ function LoginForm() {
     async function checkAuth() {
       const { data } = await supabase.auth.getSession();
       if (data?.session) {
-        router.push(redirectTo);
+        window.location.href = redirectTo;
       }
     }
     checkAuth();
-  }, [redirectTo, router]);
+  }, [redirectTo]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -67,7 +67,7 @@ function LoginForm() {
         }
 
         if (data?.session) {
-          router.push(redirectTo);
+          window.location.href = redirectTo;
         }
       } else {
         const { data, error } = await supabase.auth.signUp({
@@ -85,7 +85,7 @@ function LoginForm() {
         }
 
         if (data?.session) {
-          router.push(redirectTo);
+          window.location.href = redirectTo;
         } else {
           setSuccessMsg('Account created! You can now sign in with your credentials.');
           setMode('signin');

@@ -13,6 +13,10 @@ import sys
 import time
 from typing import Any
 
+# Ensure repository root is in sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import src.config  # Loads .env and enforces cache directories
 from playwright.sync_api import Page, sync_playwright
 
 from src.job_state import (
@@ -35,15 +39,30 @@ class JoinFailedError(Exception):
     """Raised when joining a Google Meet fails or is rejected."""
 
 
-def _ensure_display_and_audio() -> None:
-    """Ensure Xvfb and PulseAudio environment are configured."""
-    display = os.getenv("DISPLAY", ":99")
-    os.environ["DISPLAY"] = display
+def _ensure_display_and_audio(visible: bool = False) -> None:
+    """Ensure Xvfb or WSLg display and PulseAudio environment are configured."""
+    is_visible = visible or os.getenv("SHOW_BROWSER", "0").lower() in ("1", "true", "yes")
+
+    if sys.platform == "win32":
+        # Native Windows - no Xvfb or Linux PulseAudio needed
+        return
+
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/mnt/d/meet recorder/.temp/ms-playwright"
 
     # Ensure PULSE_SERVER points to valid socket if WSLg
     if Path("/mnt/wslg/PulseServer").exists():
         os.environ["PULSE_SERVER"] = "unix:/mnt/wslg/PulseServer"
+
+    if is_visible:
+        # Check if WSLg GUI display :0 is available
+        wslg_socket = Path("/mnt/wslg/.X11-unix/X0")
+        if wslg_socket.exists() or os.getenv("DISPLAY") == ":0":
+            os.environ["DISPLAY"] = ":0"
+            logger.info("Visible mode enabled: Using WSLg DISPLAY :0 to render browser directly on Windows desktop.")
+            return
+
+    display = os.getenv("DISPLAY", ":99")
+    os.environ["DISPLAY"] = display
 
     # Ensure Xvfb is running
     res = subprocess.run(["pgrep", "-f", f"Xvfb {display}"], capture_output=True)
@@ -186,17 +205,6 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
     logger.info("Waiting for admission into call (timeout: %.0fs)...", timeout_seconds)
     start_time = time.time()
 
-    # In-call indicator selectors
-    in_call_selectors = [
-        "button[aria-label*='Leave call' i]",
-        "button[aria-label*='Leave meeting' i]",
-        "button[aria-label*='Call details' i]",
-        "div[data-meeting-title]",
-        "div[aria-label*='Meeting details' i]",
-        "button[aria-label*='Turn on microphone' i]",
-        "button[aria-label*='Turn off microphone' i]",
-    ]
-
     # Rejection indicators
     rejection_selectors = [
         'text="You can\'t join this video call"',
@@ -205,8 +213,30 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
         'text="Someone removed you from the meeting"',
     ]
 
+    # Waiting-room indicators — if ANY of these are visible, we are still waiting to be admitted
+    waiting_selectors = [
+        'text="Asking to join"',
+        'text="Someone should let you in shortly"',
+        'text="You\'ll join the call when someone lets you in"',
+        'text="Waiting for the host"',
+        'text="Waiting for host"',
+        'text="Ready to join?"',
+    ]
+
+    # In-call indicator selectors — ONLY visible when actually inside an active call
+    in_call_selectors = [
+        "button[aria-label*='Show everyone' i]",
+        "button[aria-label*='People' i]",
+        "button[aria-label*='Chat with everyone' i]",
+        "button[aria-label*='Raise hand' i]",
+        "div[data-allocation-index]",
+        "div[data-participant-id]",
+    ]
+
+    last_log_time = 0.0
+
     while time.time() - start_time < timeout_seconds:
-        # Check rejection first
+        # 1. Check rejection indicators
         for sel in rejection_selectors:
             try:
                 if page.locator(sel).count() > 0 and page.locator(sel).first.is_visible():
@@ -216,12 +246,31 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
             except Exception:
                 pass
 
-        # Check in-call status
+        # 2. Check if still in waiting room
+        is_still_waiting = False
+        for sel in waiting_selectors:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    is_still_waiting = True
+                    break
+            except Exception:
+                pass
+
+        if is_still_waiting:
+            now = time.time()
+            if now - last_log_time > 15.0:
+                logger.info("Still waiting for host to admit bot into meeting (%.0fs elapsed)...", now - start_time)
+                last_log_time = now
+            time.sleep(2)
+            continue
+
+        # 3. Check genuine in-call status (only valid when NOT in waiting room)
         for sel in in_call_selectors:
             try:
                 loc = page.locator(sel)
                 if loc.count() > 0 and loc.first.is_visible():
-                    logger.info("Successfully admitted to meeting call (matched: %s).", sel)
+                    logger.info("Successfully admitted to meeting call (matched in-call element: %s).", sel)
                     return True
             except Exception:
                 pass
@@ -240,6 +289,7 @@ def join_and_record(
     bot_name: str | None = None,
     admission_timeout: float = DEFAULT_ADMISSION_TIMEOUT,
     force: bool = False,
+    visible: bool = False,
 ) -> Path:
     """Join a Google Meet call and capture audio.
 
@@ -252,6 +302,7 @@ def join_and_record(
         bot_name: Visible name for the bot in the meeting.
         admission_timeout: Seconds to wait for admission.
         force: If True, allow running even if job is not in 'pending' status.
+        visible: If True, show browser GUI on screen instead of headless Xvfb.
 
     Returns:
         Path to the recorded audio.wav file.
@@ -259,7 +310,7 @@ def join_and_record(
     Raises:
         JoinFailedError: If joining, admission, or recording fails.
     """
-    _ensure_display_and_audio()
+    _ensure_display_and_audio(visible=visible)
     j_dir = jobs_dir if jobs_dir is not None else DEFAULT_JOBS_DIR
     r_dir = recordings_dir if recordings_dir is not None else DEFAULT_RECORDINGS_DIR
 
@@ -276,9 +327,9 @@ def join_and_record(
 
     display_name = bot_name or DEFAULT_BOT_NAME
 
-    logger.info("Launching browser for meeting %s (target: %s)...", meeting_id, meet_link)
+    logger.info("Launching browser for meeting %s (target: %s, visible=%s)...", meeting_id, meet_link, visible)
 
-    profile_dir = Path("/mnt/d/meet recorder/.temp/chrome_profile")
+    profile_dir = Path("D:/meet recorder/.temp/chrome_profile") if sys.platform == "win32" else Path("/mnt/d/meet recorder/.temp/chrome_profile")
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
@@ -343,6 +394,7 @@ def main() -> None:
     parser.add_argument("--max-minutes", type=int, default=None, help="Maximum recording duration cap in minutes")
     parser.add_argument("--bot-name", default=None, help="Visible bot display name")
     parser.add_argument("--force", action="store_true", help="Bypass pending status check")
+    parser.add_argument("--visible", action="store_true", help="Show browser on screen instead of headless Xvfb")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -353,6 +405,7 @@ def main() -> None:
             max_minutes=args.max_minutes,
             bot_name=args.bot_name,
             force=args.force,
+            visible=args.visible,
         )
     except Exception as exc:
         logger.error("Join worker failed: %s", exc)

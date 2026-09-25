@@ -12,30 +12,38 @@ import {
   Lightbulb,
   Settings,
   LogOut,
+  LayoutGrid,
+  Users,
+  BarChart3,
+  CreditCard,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { applyWorkspaceScope, useWorkspace } from '../lib/workspace';
+import WorkspaceSwitcher from './WorkspaceSwitcher';
 
 export default function Navigation({ session }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { activeOrgId, isOrganisation } = useWorkspace();
   const [meetingCount, setMeetingCount] = useState(null);
   const [userProfile, setUserProfile] = useState({
-    name: session?.user?.user_metadata?.name || 'Harsh Vardhan Tripathi',
-    email: session?.user?.email || 'harsh@sentio.in',
+    name: session?.user?.user_metadata?.name || session?.user?.email?.split('@')[0] || 'Account',
+    email: session?.user?.email || '',
   });
 
   useEffect(() => {
     async function checkData() {
       try {
-        const { count } = await supabase
-          .from('meetings')
-          .select('*', { count: 'exact', head: true });
+        const { count } = await applyWorkspaceScope(
+          supabase.from('meetings').select('*', { count: 'exact', head: true }),
+          activeOrgId
+        );
         setMeetingCount(count);
 
         const { data: userData } = await supabase
           .from('User')
           .select('name, email')
-          .eq('email', session?.user?.email || 'harsh@sentio.in')
+          .eq('email', session?.user?.email || '')
           .limit(1);
 
         if (userData && userData.length > 0) {
@@ -52,7 +60,7 @@ export default function Navigation({ session }) {
     checkData();
     const interval = setInterval(checkData, 30000);
     return () => clearInterval(interval);
-  }, [session]);
+  }, [session, activeOrgId]);
 
   const handleSignOut = async () => {
     try {
@@ -72,6 +80,37 @@ export default function Navigation({ session }) {
     { href: '/settings', label: 'Settings', icon: Settings },
   ];
 
+  const organisationItems = [
+    { href: '/organisation/overview', label: 'Overview', icon: LayoutGrid },
+    { href: '/organisation/meetings', label: 'Meetings', icon: CalendarDays },
+    { href: '/organisation/members', label: 'Members', icon: Users },
+    { href: '/organisation/analytics', label: 'Analytics', icon: BarChart3 },
+    { href: '/organisation/settings', label: 'Settings', icon: Settings },
+    { href: '/organisation/billing', label: 'Billing', icon: CreditCard },
+  ];
+
+  const renderNavItem = (item) => {
+    const Icon = item.icon;
+    const isActive =
+      pathname === item.href ||
+      (item.href !== '/dashboard' && pathname.startsWith(item.href));
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        className={`sidebar-nav-item ${isActive ? 'active' : ''}`}
+      >
+        <div className="sidebar-nav-item-inner">
+          <Icon size={17} aria-hidden="true" strokeWidth={isActive ? 2.2 : 1.75} />
+          <span>{item.label}</span>
+        </div>
+        {item.badge !== null && item.badge !== undefined && item.badge > 0 && (
+          <span className="sidebar-nav-badge tabular-nums">{item.badge}</span>
+        )}
+      </Link>
+    );
+  };
+
   return (
     <aside className="sidebar-ref">
       {/* Brand Header */}
@@ -84,29 +123,19 @@ export default function Navigation({ session }) {
         </Link>
       </div>
 
+      {/* Workspace Switcher */}
+      <WorkspaceSwitcher />
+
       {/* Navigation Items */}
       <nav className="sidebar-nav">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive =
-            pathname === item.href ||
-            (item.href !== '/dashboard' && pathname.startsWith(item.href));
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`sidebar-nav-item ${isActive ? 'active' : ''}`}
-            >
-              <div className="sidebar-nav-item-inner">
-                <Icon size={17} aria-hidden="true" strokeWidth={isActive ? 2.2 : 1.75} />
-                <span>{item.label}</span>
-              </div>
-              {item.badge !== null && item.badge !== undefined && item.badge > 0 && (
-                <span className="sidebar-nav-badge tabular-nums">{item.badge}</span>
-              )}
-            </Link>
-          );
-        })}
+        {navItems.map(renderNavItem)}
+
+        {isOrganisation && (
+          <>
+            <div className="sidebar-nav-group-label">Organisation</div>
+            {organisationItems.map(renderNavItem)}
+          </>
+        )}
       </nav>
 
       {/* Bottom Section: User Profile & Sign Out */}

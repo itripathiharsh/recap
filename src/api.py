@@ -17,6 +17,7 @@ Provides management, query, and status endpoints for the dashboard:
 """
 
 from datetime import datetime, timezone
+import hmac
 import json
 import logging
 import os
@@ -27,9 +28,9 @@ import secrets
 import time
 import uuid
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from src.google_meet_client import (
@@ -69,13 +70,60 @@ app = FastAPI(
 )
 
 # CORS middleware for Next.js dashboard
+# Restrict via DASHBOARD_ORIGIN env (comma-separated origins); default "*".
+_cors_origins = [
+    o.strip() for o in os.getenv("DASHBOARD_ORIGIN", "*").split(",") if o.strip()
+] or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Personal app; can be restricted via DASHBOARD_ORIGIN env var
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Remote access control --------------------------------------------------
+# Loopback callers (worker heartbeat, OAuth callback, local curl) are always
+# allowed. Non-loopback callers must present X-Internal-Token matching
+# FASTAPI_AUTH_TOKEN. While FASTAPI_AUTH_TOKEN is unset the API behaves as
+# before (remote allowed) and logs a startup warning; set the env var to
+# close remote access. Health checks and the browser OAuth flow stay open.
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_remote_token_warned = False
+
+
+def _client_is_loopback(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    return host in _LOOPBACK_HOSTS or host.startswith("127.")
+
+
+@app.middleware("http")
+async def _restrict_remote_access(request: Request, call_next: Any) -> Any:
+    path = request.url.path
+    public_paths = ("/", "/health", "/api/auth/google", "/api/auth/google/callback")
+    if path in public_paths or _client_is_loopback(request):
+        return await call_next(request)
+
+    expected = os.getenv("FASTAPI_AUTH_TOKEN", "").strip()
+    provided = request.headers.get("X-Internal-Token", "")
+    if expected:
+        if not (provided and hmac.compare_digest(provided, expected)):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "X-Internal-Token required for remote access"},
+            )
+        return await call_next(request)
+
+    global _remote_token_warned
+    if not _remote_token_warned:
+        logger.warning(
+            "FASTAPI_AUTH_TOKEN is not set: remote (non-loopback) access to "
+            "the API is unrestricted. Set FASTAPI_AUTH_TOKEN in .env to "
+            "require X-Internal-Token for remote callers."
+        )
+        _remote_token_warned = True
+    return await call_next(request)
+
 
 DEFAULT_RECORDINGS_DIR = Path("data/recordings")
 DEFAULT_JOBS_DIR = Path("data/jobs")
@@ -98,7 +146,9 @@ def health_check() -> dict[str, str]:
 # --- Request/Response Models ---
 class CreateMeetingRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
-    meet_link: str = Field(..., pattern=r"^https://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}")
+    meet_link: str = Field(
+        ..., pattern=r"^https://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}"
+    )
     scheduled_start: str | datetime
     expected_duration_minutes: int = Field(30, ge=5, le=180)
 
@@ -117,11 +167,16 @@ class HeartbeatRequest(BaseModel):
 
 # --- Endpoints ---
 
+
 @app.post("/api/meetings", status_code=status.HTTP_201_CREATED)
 def create_meeting_endpoint(req: CreateMeetingRequest) -> dict[str, Any]:
     """Create a new scheduled meeting in Supabase and local job state."""
     meeting_id = str(uuid.uuid4())
-    start_str = req.scheduled_start.isoformat() if isinstance(req.scheduled_start, datetime) else str(req.scheduled_start)
+    start_str = (
+        req.scheduled_start.isoformat()
+        if isinstance(req.scheduled_start, datetime)
+        else str(req.scheduled_start)
+    )
 
     # 1. Create in Supabase
     db_meeting = db_create_meeting(
@@ -142,7 +197,9 @@ def create_meeting_endpoint(req: CreateMeetingRequest) -> dict[str, Any]:
             jobs_dir=DEFAULT_JOBS_DIR,
         )
     except Exception as exc:
-        logger.warning("Could not initialize local job JSON for %s: %s", meeting_id, exc)
+        logger.warning(
+            "Could not initialize local job JSON for %s: %s", meeting_id, exc
+        )
 
     db_record_system_event(
         level="info",
@@ -177,15 +234,17 @@ def list_meetings_endpoint(
     for j in local_jobs:
         if status_filter and j.get("status") != status_filter:
             continue
-        results.append({
-            "id": j.get("meeting_id"),
-            "title": j.get("title", "Meeting"),
-            "meet_link": j.get("meet_link"),
-            "scheduled_start": j.get("scheduled_start"),
-            "status": j.get("status"),
-            "created_at": j.get("created_at"),
-            "error_message": j.get("error"),
-        })
+        results.append(
+            {
+                "id": j.get("meeting_id"),
+                "title": j.get("title", "Meeting"),
+                "meet_link": j.get("meet_link"),
+                "scheduled_start": j.get("scheduled_start"),
+                "status": j.get("status"),
+                "created_at": j.get("created_at"),
+                "error_message": j.get("error"),
+            }
+        )
     return results[:limit]
 
 
@@ -213,14 +272,20 @@ def get_meeting_endpoint(meeting_id: str) -> dict[str, Any]:
 
 
 @app.patch("/api/meetings/{meeting_id}")
-def update_meeting_endpoint(meeting_id: str, req: UpdateMeetingRequest) -> dict[str, Any]:
+def update_meeting_endpoint(
+    meeting_id: str, req: UpdateMeetingRequest
+) -> dict[str, Any]:
     """Update meeting fields."""
     client = get_supabase_client()
     update_data: dict[str, Any] = {}
     if req.title is not None:
         update_data["title"] = req.title
     if req.scheduled_start is not None:
-        update_data["scheduled_start"] = req.scheduled_start.isoformat() if isinstance(req.scheduled_start, datetime) else str(req.scheduled_start)
+        update_data["scheduled_start"] = (
+            req.scheduled_start.isoformat()
+            if isinstance(req.scheduled_start, datetime)
+            else str(req.scheduled_start)
+        )
     if req.expected_duration_minutes is not None:
         update_data["expected_duration_minutes"] = req.expected_duration_minutes
 
@@ -238,7 +303,13 @@ def delete_meeting_endpoint(meeting_id: str) -> dict[str, Any]:
     """Cancel or delete meeting."""
     db_update_meeting_status(meeting_id, "cancelled")
     try:
-        update_job_status(meeting_id, "failed", error="Cancelled by user", force=True, jobs_dir=DEFAULT_JOBS_DIR)
+        update_job_status(
+            meeting_id,
+            "failed",
+            error="Cancelled by user",
+            force=True,
+            jobs_dir=DEFAULT_JOBS_DIR,
+        )
     except Exception:
         pass
     return {"status": "cancelled", "meeting_id": meeting_id}
@@ -249,7 +320,9 @@ def start_meeting_endpoint(meeting_id: str) -> dict[str, Any]:
     """Manually queue meeting for immediate start by worker."""
     db_update_meeting_status(meeting_id, "queued")
     try:
-        update_job_status(meeting_id, JobStatus.PENDING.value, force=True, jobs_dir=DEFAULT_JOBS_DIR)
+        update_job_status(
+            meeting_id, JobStatus.PENDING.value, force=True, jobs_dir=DEFAULT_JOBS_DIR
+        )
     except Exception:
         pass
     db_record_system_event(
@@ -273,7 +346,12 @@ def get_transcript_endpoint(meeting_id: str) -> dict[str, Any]:
     client = get_supabase_client()
     if client:
         try:
-            res = client.table("transcripts").select("*").eq("meeting_id", meeting_id).execute()
+            res = (
+                client.table("transcripts")
+                .select("*")
+                .eq("meeting_id", meeting_id)
+                .execute()
+            )
             if res.data:
                 return res.data[0]
         except Exception:
@@ -313,7 +391,9 @@ def get_mom_endpoint(meeting_id: str) -> dict[str, Any]:
     if mom_json.exists():
         with open(mom_json, "r", encoding="utf-8") as f:
             data = json.load(f)
-        data["mom_markdown"] = mom_md.read_text(encoding="utf-8") if mom_md.exists() else ""
+        data["mom_markdown"] = (
+            mom_md.read_text(encoding="utf-8") if mom_md.exists() else ""
+        )
         return data
 
     raise HTTPException(status_code=404, detail="MOM not found for this meeting")
@@ -341,9 +421,9 @@ def get_system_status_endpoint() -> dict[str, Any]:
     rec_path = DEFAULT_RECORDINGS_DIR.resolve()
     disk_stat = shutil.disk_usage(rec_path if rec_path.exists() else Path("."))
     disk_usage = {
-        "total_gb": round(disk_stat.total / (1024 ** 3), 1),
-        "used_gb": round(disk_stat.used / (1024 ** 3), 1),
-        "free_gb": round(disk_stat.free / (1024 ** 3), 1),
+        "total_gb": round(disk_stat.total / (1024**3), 1),
+        "used_gb": round(disk_stat.used / (1024**3), 1),
+        "free_gb": round(disk_stat.free / (1024**3), 1),
         "percent_used": round((disk_stat.used / disk_stat.total) * 100, 1),
     }
 
@@ -359,7 +439,12 @@ def get_system_status_endpoint() -> dict[str, Any]:
     queue_length = 0
     if client:
         try:
-            res = client.table("meetings").select("id", count="exact").in_("status", ["scheduled", "queued", "recording", "processing"]).execute()
+            res = (
+                client.table("meetings")
+                .select("id", count="exact")
+                .in_("status", ["scheduled", "queued", "recording", "processing"])
+                .execute()
+            )
             queue_length = res.count or 0
         except Exception:
             pass
@@ -402,6 +487,7 @@ def post_heartbeat_endpoint(req: HeartbeatRequest) -> dict[str, Any]:
 
 # --- Google Meet REST API & OAuth Endpoints ---
 
+
 @app.get("/api/auth/google")
 def google_auth_endpoint(
     redirect_uri: str | None = Query(None),
@@ -429,7 +515,9 @@ def google_auth_endpoint(
     if as_json:
         return {"authorization_url": auth_url, "state": state}
 
-    return RedirectResponse(url=auth_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    return RedirectResponse(
+        url=auth_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT
+    )
 
 
 @app.get("/api/auth/google/callback")
@@ -524,7 +612,9 @@ def get_meeting_participants_endpoint(meeting_id: str) -> dict[str, Any]:
     api_status = get_connection_status()
     if api_status.get("connected") and meet_link:
         meet_code = extract_meeting_code(meet_link)
-        conf_record = get_conference_record_for_meeting(meet_code, scheduled_time=scheduled_start)
+        conf_record = get_conference_record_for_meeting(
+            meet_code, scheduled_time=scheduled_start
+        )
         if conf_record and "name" in conf_record:
             conf_name = conf_record["name"]
             participants = get_meeting_participants(conf_name)
@@ -549,11 +639,13 @@ def get_meeting_participants_endpoint(meeting_id: str) -> dict[str, Any]:
                 clean_list = []
                 for item in data:
                     if isinstance(item, str):
-                        clean_list.append({
-                            "displayName": item,
-                            "user_type": "unknown",
-                            "source": "dom_fallback",
-                        })
+                        clean_list.append(
+                            {
+                                "displayName": item,
+                                "user_type": "unknown",
+                                "source": "dom_fallback",
+                            }
+                        )
                     elif isinstance(item, dict):
                         clean_list.append(item)
                 return {
@@ -565,7 +657,9 @@ def get_meeting_participants_endpoint(meeting_id: str) -> dict[str, Any]:
             elif isinstance(data, dict):
                 return data
         except Exception as exc:
-            logger.warning("Could not read participants file for %s: %s", meeting_id, exc)
+            logger.warning(
+                "Could not read participants file for %s: %s", meeting_id, exc
+            )
 
     return {
         "meeting_id": meeting_id,
@@ -581,7 +675,9 @@ def get_meeting_speakers_endpoint(meeting_id: str) -> dict[str, Any]:
     """Retrieve speaker mapping, participant roster, diarized speakers, resolved names, and confidence."""
     rec_dir = DEFAULT_RECORDINGS_DIR / meeting_id
     if not rec_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Recording data for meeting {meeting_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Recording data for meeting {meeting_id} not found"
+        )
 
     # 1. Caption availability
     captions_file = rec_dir / "captions.json"
@@ -612,9 +708,15 @@ def get_meeting_speakers_endpoint(meeting_id: str) -> dict[str, Any]:
     if speakers_file.exists():
         try:
             s_data = json.loads(speakers_file.read_text(encoding="utf-8"))
-            diarized_speakers = sorted(list(set(
-                t.get("speaker") for t in s_data.get("speaker_turns", []) if t.get("speaker")
-            )))
+            diarized_speakers = sorted(
+                list(
+                    set(
+                        t.get("speaker")
+                        for t in s_data.get("speaker_turns", [])
+                        if t.get("speaker")
+                    )
+                )
+            )
         except Exception:
             pass
 
@@ -640,12 +742,15 @@ def get_meeting_speakers_endpoint(meeting_id: str) -> dict[str, Any]:
                     if spk_id and spk_id not in seen:
                         seen.add(spk_id)
                         name = turn.get("speaker")
-                        speakers_list.append({
-                            "speaker_id": spk_id,
-                            "name": name,
-                            "confidence": turn.get("confidence", 0.0) or (1.0 if name != spk_id else 0.0),
-                            "source": "final_transcript",
-                        })
+                        speakers_list.append(
+                            {
+                                "speaker_id": spk_id,
+                                "name": name,
+                                "confidence": turn.get("confidence", 0.0)
+                                or (1.0 if name != spk_id else 0.0),
+                                "source": "final_transcript",
+                            }
+                        )
             except Exception:
                 pass
 
@@ -656,4 +761,3 @@ def get_meeting_speakers_endpoint(meeting_id: str) -> dict[str, Any]:
         "diarized_speakers": diarized_speakers,
         "speakers": speakers_list,
     }
-

@@ -22,6 +22,8 @@ load_dotenv()
 logger = logging.getLogger("supabase_client")
 
 _client = None
+_default_owner_id: str | None = None
+_default_owner_resolved = False
 
 
 def get_supabase_client() -> Any:
@@ -31,19 +33,66 @@ def get_supabase_client() -> Any:
         return _client
 
     url = os.getenv("SUPABASE_URL", "").strip()
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or os.getenv("SUPABASE_KEY", "").strip() or os.getenv("SUPABASE_ANON_KEY", "").strip()
+    service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    key = (
+        service_key
+        or os.getenv("SUPABASE_KEY", "").strip()
+        or os.getenv("SUPABASE_ANON_KEY", "").strip()
+    )
 
     if not url or not key:
-        logger.warning("SUPABASE_URL or SUPABASE_KEY not set; Supabase operations will be skipped or mocked.")
+        logger.warning(
+            "SUPABASE_URL or SUPABASE_KEY not set; Supabase operations will be skipped or mocked."
+        )
         return None
+
+    if not service_key:
+        logger.warning(
+            "SUPABASE_SERVICE_ROLE_KEY is not set - falling back to %s. "
+            "Row Level Security rejects anon writes, so backend inserts/updates "
+            "will fail until the service role key is configured.",
+            "SUPABASE_KEY",
+        )
 
     try:
         from supabase import create_client
+
         _client = create_client(url, key)
         return _client
     except Exception as exc:
         logger.error("Failed to initialize Supabase client: %s", exc)
         return None
+
+
+def resolve_default_owner_id() -> str | None:
+    """Resolve the default meeting owner id for backend-created meetings.
+
+    Reads MEETINGS_OWNER_ID first, falling back to a service-role lookup of
+    MEETINGS_OWNER_EMAIL. The result is cached for the process lifetime.
+
+    Returns:
+        The owner's auth user id, or None when unconfigured or unresolvable.
+    """
+    global _default_owner_id, _default_owner_resolved
+    if _default_owner_resolved:
+        return _default_owner_id
+
+    owner_id = os.getenv("MEETINGS_OWNER_ID", "").strip()
+    if not owner_id:
+        email = os.getenv("MEETINGS_OWNER_EMAIL", "").strip()
+        client = get_supabase_client()
+        if email and client is not None:
+            try:
+                res = client.rpc("get_auth_user_id", {"p_email": email}).execute()
+                owner_id = (res.data or "").strip() if isinstance(res.data, str) else ""
+            except Exception as exc:
+                logger.warning(
+                    "Could not resolve MEETINGS_OWNER_EMAIL to a user id: %s", exc
+                )
+
+    _default_owner_id = owner_id or None
+    _default_owner_resolved = True
+    return _default_owner_id
 
 
 def db_create_meeting(
@@ -59,7 +108,11 @@ def db_create_meeting(
     if not client:
         return None
 
-    start_iso = scheduled_start.isoformat() if isinstance(scheduled_start, datetime) else str(scheduled_start)
+    start_iso = (
+        scheduled_start.isoformat()
+        if isinstance(scheduled_start, datetime)
+        else str(scheduled_start)
+    )
 
     data: dict[str, Any] = {
         "title": title,
@@ -70,8 +123,19 @@ def db_create_meeting(
     }
     if meeting_id:
         data["id"] = meeting_id
-    if user_id:
-        data["user_id"] = user_id
+    owner = user_id or resolve_default_owner_id()
+    if owner:
+        data["user_id"] = owner
+        data["owner_id"] = owner
+        data["workspace_type"] = "individual"
+        data["visibility"] = "private"
+    else:
+        logger.warning(
+            "Creating meeting %r without an owner (set MEETINGS_OWNER_ID or "
+            "MEETINGS_OWNER_EMAIL). It stays invisible in the dashboard until "
+            "scripts/backfill_meeting_ownership.py stamps an owner.",
+            title,
+        )
 
     try:
         res = client.table("meetings").insert(data).execute()
@@ -119,18 +183,27 @@ def db_update_meeting_status(
         client.table("meetings").update(update_payload).eq("id", meeting_id).execute()
         return True
     except Exception as exc:
-        logger.error("Failed to update meeting %s status to %s: %s", meeting_id, status, exc)
+        logger.error(
+            "Failed to update meeting %s status to %s: %s", meeting_id, status, exc
+        )
         return False
 
 
-def db_list_meetings(limit: int = 50, status: str | None = None) -> list[dict[str, Any]]:
+def db_list_meetings(
+    limit: int = 50, status: str | None = None
+) -> list[dict[str, Any]]:
     """List meetings ordered by scheduled_start desc."""
     client = get_supabase_client()
     if not client:
         return []
 
     try:
-        query = client.table("meetings").select("*").order("scheduled_start", desc=True).limit(limit)
+        query = (
+            client.table("meetings")
+            .select("*")
+            .order("scheduled_start", desc=True)
+            .limit(limit)
+        )
         if status:
             query = query.eq("status", status)
         res = query.execute()
@@ -179,8 +252,8 @@ def db_save_speaker_turns(
         {
             "meeting_id": meeting_id,
             "speaker": str(t.get("speaker", "UNKNOWN")),
-            "start_time": float(t.get("start") if "start" in t else t.get("start_time", 0.0)),
-            "end_time": float(t.get("end") if "end" in t else t.get("end_time", 0.0)),
+            "start_time": float(t.get("start") or t.get("start_time") or 0.0),
+            "end_time": float(t.get("end") or t.get("end_time") or 0.0),
             "text": str(t.get("text", "")).strip(),
         }
         for t in speaker_turns
@@ -312,6 +385,7 @@ def db_get_upcoming_meetings(lookahead_minutes: int = 5) -> list[dict[str, Any]]
         return []
 
     from datetime import timedelta
+
     now = datetime.now(timezone.utc)
     threshold = (now + timedelta(minutes=lookahead_minutes)).isoformat()
 
@@ -340,7 +414,12 @@ def db_claim_meeting(meeting_id: str, target_status: str = "joining") -> bool:
         # Atomic condition: status in ('scheduled', 'queued')
         res = (
             client.table("meetings")
-            .update({"status": target_status, "started_at": datetime.now(timezone.utc).isoformat()})
+            .update(
+                {
+                    "status": target_status,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
             .eq("id", meeting_id)
             .in_("status", ["scheduled", "queued"])
             .execute()
@@ -366,8 +445,12 @@ def db_upload_recording_audio(meeting_id: str, audio_path: Path) -> str | None:
                 file_options={"content-type": "audio/wav", "upsert": "true"},
             )
         supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-        public_url = f"{supabase_url}/storage/v1/object/public/recordings/{storage_path}"
-        client.table("meetings").update({"recording_url": public_url}).eq("id", meeting_id).execute()
+        public_url = (
+            f"{supabase_url}/storage/v1/object/public/recordings/{storage_path}"
+        )
+        client.table("meetings").update({"recording_url": public_url}).eq(
+            "id", meeting_id
+        ).execute()
         logger.info("Uploaded recording audio to Supabase Storage: %s", public_url)
         return public_url
     except Exception as exc:
@@ -384,11 +467,19 @@ def db_delete_recording_audio(meeting_id: str) -> bool:
     try:
         storage_path = f"{meeting_id}/audio.wav"
         client.storage.from_("recordings").remove([storage_path])
-        client.table("meetings").update({"recording_url": None}).eq("id", meeting_id).execute()
-        logger.info("Deleted recording audio from Supabase Storage for meeting: %s", meeting_id)
+        client.table("meetings").update({"recording_url": None}).eq(
+            "id", meeting_id
+        ).execute()
+        logger.info(
+            "Deleted recording audio from Supabase Storage for meeting: %s", meeting_id
+        )
         return True
     except Exception as exc:
-        logger.warning("Failed to delete recording audio from Supabase Storage for %s: %s", meeting_id, exc)
+        logger.warning(
+            "Failed to delete recording audio from Supabase Storage for %s: %s",
+            meeting_id,
+            exc,
+        )
         return False
 
 
@@ -410,10 +501,10 @@ def db_delete_meeting(meeting_id: str) -> bool:
         client.table("system_events").delete().eq("meeting_id", meeting_id).execute()
         client.table("meetings").delete().eq("id", meeting_id).execute()
 
-        logger.info("Successfully purged meeting %s and all associated records.", meeting_id)
+        logger.info(
+            "Successfully purged meeting %s and all associated records.", meeting_id
+        )
         return True
     except Exception as exc:
         logger.error("Failed to delete meeting %s: %s", meeting_id, exc)
         return False
-
-

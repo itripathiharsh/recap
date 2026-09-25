@@ -17,10 +17,12 @@ import {
   Video,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
 import AddMeetingModal from '../../components/AddMeetingModal';
 import TopHeader from '../../components/TopHeader';
 
 export default function DashboardPage() {
+  const { activeOrgId } = useWorkspace();
   const [meetings, setMeetings] = useState([]);
   const [actionItems, setActionItems] = useState([]);
   const [uniqueSpeakers, setUniqueSpeakers] = useState([]);
@@ -29,23 +31,37 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [completedTasks, setCompletedTasks] = useState(new Set());
   const [activeTooltip, setActiveTooltip] = useState(2); // Default to W3 hover tooltip like in mockup
+  const [displayName, setDisplayName] = useState('');
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      const user = data?.session?.user;
+      if (user) {
+        setDisplayName(
+          user.user_metadata?.name || user.email?.split('@')[0] || ''
+        );
+      }
+    }).catch(() => {});
+  }, []);
 
   const fetchDashboardData = async () => {
     try {
-      // 1. Fetch meetings
-      const { data: meetData, error: meetErr } = await supabase
-        .from('meetings')
-        .select('*')
-        .order('scheduled_start', { ascending: false });
+      // 1. Fetch meetings (scoped to the active workspace)
+      const { data: meetData, error: meetErr } = await applyWorkspaceScope(
+        supabase.from('meetings').select('*'),
+        activeOrgId
+      ).order('scheduled_start', { ascending: false });
 
       if (meetErr) throw meetErr;
       const allMeetings = meetData || [];
       setMeetings(allMeetings);
 
-      // 2. Fetch MOMs for action items
+      const meetingIds = new Set(allMeetings.map((m) => m.id));
+
+      // 2. Fetch MOMs for action items (scoped to those meetings)
       const { data: momData } = await supabase.from('mom').select('*');
       const allActions = [];
-      (momData || []).forEach((m) => {
+      filterToMeetings(momData, meetingIds).forEach((m) => {
         if (Array.isArray(m.action_items)) {
           m.action_items.forEach((item, idx) => {
             allActions.push({
@@ -60,11 +76,15 @@ export default function DashboardPage() {
       });
       setActionItems(allActions);
 
-      // 3. Fetch unique speakers from speaker_turns
+      // 3. Fetch unique speakers from speaker_turns (scoped to those meetings)
       const { data: turnsData } = await supabase
         .from('speaker_turns')
-        .select('speaker');
-      const speakersSet = new Set((turnsData || []).map((t) => t.speaker).filter(Boolean));
+        .select('speaker, meeting_id');
+      const speakersSet = new Set(
+        filterToMeetings(turnsData, meetingIds)
+          .map((t) => t.speaker)
+          .filter(Boolean)
+      );
       setUniqueSpeakers(Array.from(speakersSet));
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -87,7 +107,7 @@ export default function DashboardPage() {
       supabase.removeChannel(channel);
       clearInterval(interval);
     };
-  }, []);
+  }, [activeOrgId]);
 
   // Time-based greeting
   const greeting = useMemo(() => {
@@ -224,7 +244,7 @@ export default function DashboardPage() {
       <section className="dashboard-hero">
         <div>
           <h1 className="dashboard-hero-title">
-            {greeting}, Harsh <span role="img" aria-label="wave">👋</span>
+            {greeting}{displayName ? `, ${displayName}` : ''} <span role="img" aria-label="wave">👋</span>
           </h1>
           <p className="dashboard-hero-subtitle">
             Here&apos;s your meeting intelligence for today.

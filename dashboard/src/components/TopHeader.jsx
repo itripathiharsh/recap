@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { applyWorkspaceScope, useWorkspace } from '../lib/workspace';
 import AddMeetingModal from './AddMeetingModal';
 
 export default function TopHeader({
@@ -26,14 +27,15 @@ export default function TopHeader({
   placeholder = 'Search meetings, transcripts, topics, speakers...',
 }) {
   const router = useRouter();
+  const { activeOrgId } = useWorkspace();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(2);
   const [userProfile, setUserProfile] = useState({
-    name: 'Harsh Vardhan Tripathi',
-    email: 'harsh@sentio.in',
+    name: '',
+    email: '',
   });
 
   const notifRef = useRef(null);
@@ -73,15 +75,16 @@ export default function TopHeader({
         if (sessionData?.session?.user) {
           const user = sessionData.session.user;
           setUserProfile({
-            name: user.user_metadata?.name || 'Harsh Vardhan Tripathi',
-            email: user.email || 'harsh@sentio.in',
+            name: user.user_metadata?.name || user.email?.split('@')[0] || 'Account',
+            email: user.email || '',
           });
         }
 
-        // Fetch recent meetings for notifications
-        const { data: recentMeetings } = await supabase
-          .from('meetings')
-          .select('id, title, status, scheduled_start, created_at')
+        // Fetch recent meetings for notifications (scoped to active workspace)
+        const { data: recentMeetings } = await applyWorkspaceScope(
+          supabase.from('meetings').select('id, title, status, scheduled_start, created_at'),
+          activeOrgId
+        )
           .order('created_at', { ascending: false })
           .limit(4);
 
@@ -123,7 +126,7 @@ export default function TopHeader({
     }
 
     loadHeaderData();
-  }, []);
+  }, [activeOrgId]);
 
   const handleSignOut = async () => {
     try {

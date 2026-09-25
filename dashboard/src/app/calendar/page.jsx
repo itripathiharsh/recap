@@ -24,6 +24,7 @@ import {
   Check,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
 import AddMeetingModal from '../../components/AddMeetingModal';
 import TopHeader from '../../components/TopHeader';
 
@@ -146,6 +147,7 @@ function GoogleMeetIcon({ size = 20 }) {
 
 export default function CalendarPage() {
   const searchParams = useSearchParams();
+  const { activeOrgId } = useWorkspace();
 
   // Primary state
   const [meetings, setMeetings] = useState([]);
@@ -208,14 +210,14 @@ export default function CalendarPage() {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  // Fetch real data from Supabase
+  // Fetch real data from Supabase (scoped to the active workspace)
   const fetchData = useCallback(async () => {
     try {
       const [meetingsRes, momsRes, turnsRes] = await Promise.all([
-        supabase
-          .from('meetings')
-          .select('*')
-          .order('scheduled_start', { ascending: true }),
+        applyWorkspaceScope(
+          supabase.from('meetings').select('*'),
+          activeOrgId
+        ).order('scheduled_start', { ascending: true }),
         supabase
           .from('mom')
           .select('meeting_id, summary'),
@@ -224,18 +226,19 @@ export default function CalendarPage() {
           .select('meeting_id, speaker'),
       ]);
 
+      const meetingIds = new Set((meetingsRes.data || []).map((m) => m.id));
       setMeetings(meetingsRes.data || []);
 
-      // Index MOMs by meeting_id
+      // Index MOMs by meeting_id (scoped to those meetings)
       const momMap = {};
-      (momsRes.data || []).forEach((m) => {
+      filterToMeetings(momsRes.data, meetingIds).forEach((m) => {
         if (m.meeting_id) momMap[m.meeting_id] = m;
       });
       setMoms(momMap);
 
-      // Index distinct speakers by meeting_id
+      // Index distinct speakers by meeting_id (scoped to those meetings)
       const spkMap = {};
-      (turnsRes.data || []).forEach((t) => {
+      filterToMeetings(turnsRes.data, meetingIds).forEach((t) => {
         if (!t.meeting_id || !t.speaker) return;
         if (!spkMap[t.meeting_id]) spkMap[t.meeting_id] = new Set();
         spkMap[t.meeting_id].add(t.speaker);
@@ -248,7 +251,7 @@ export default function CalendarPage() {
     } catch (err) {
       console.error('Error fetching calendar data:', err);
     }
-  }, []);
+  }, [activeOrgId]);
 
   useEffect(() => {
     fetchData();

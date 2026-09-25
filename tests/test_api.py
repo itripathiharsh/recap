@@ -42,6 +42,7 @@ def _cleanup_test_meeting(meeting_id: str) -> None:
     client.delete(f"/api/meetings/{meeting_id}")
     try:
         from src.supabase_client import get_supabase_client
+
         sb = get_supabase_client()
         if sb:
             sb.table("meetings").delete().eq("id", meeting_id).execute()
@@ -49,6 +50,7 @@ def _cleanup_test_meeting(meeting_id: str) -> None:
         pass
     try:
         from pathlib import Path
+
         jf = Path(f"data/jobs/{meeting_id}.json")
         if jf.exists():
             jf.unlink(missing_ok=True)
@@ -109,3 +111,52 @@ def test_cancel_meeting() -> None:
         assert status_resp.json()["status"] == "cancelled"
     finally:
         _cleanup_test_meeting(meeting_id)
+
+
+def test_loopback_detection() -> None:
+    """Loopback clients (worker heartbeat, OAuth callback) bypass the token."""
+    from starlette.requests import Request
+
+    from src.api import _client_is_loopback
+
+    def _req(host: str) -> Request:
+        return Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/",
+                "headers": [],
+                "client": (host, 1),
+            }
+        )
+
+    assert _client_is_loopback(_req("127.0.0.1"))
+    assert _client_is_loopback(_req("::1"))
+    assert not _client_is_loopback(_req("203.0.113.5"))
+
+
+def test_remote_requires_token_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When FASTAPI_AUTH_TOKEN is set, remote callers need a matching header."""
+    monkeypatch.setenv("FASTAPI_AUTH_TOKEN", "unit-test-token")
+
+    # Public paths stay reachable without the token.
+    assert client.get("/health").status_code == 200
+
+    # Protected path: no token -> 403, wrong token -> 403, right token -> 200.
+    assert client.get("/api/system/status").status_code == 403
+    assert (
+        client.get(
+            "/api/system/status", headers={"X-Internal-Token": "wrong"}
+        ).status_code
+        == 403
+    )
+    ok = client.get(
+        "/api/system/status", headers={"X-Internal-Token": "unit-test-token"}
+    )
+    assert ok.status_code == 200
+
+
+def test_remote_open_when_token_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Legacy behaviour: remote access allowed while FASTAPI_AUTH_TOKEN is unset."""
+    monkeypatch.delenv("FASTAPI_AUTH_TOKEN", raising=False)
+    assert client.get("/api/system/status").status_code == 200

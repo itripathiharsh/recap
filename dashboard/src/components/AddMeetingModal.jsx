@@ -3,10 +3,13 @@
 import React, { useState } from 'react';
 import { X, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useWorkspace } from '../lib/workspace';
 
 export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
+  const { activeOrgId } = useWorkspace();
   const [title, setTitle] = useState('');
   const [meetLink, setMeetLink] = useState('');
+  const [isInstant, setIsInstant] = useState(true);
   const [date, setDate] = useState(() => {
     const today = new Date();
     return today.toISOString().split('T')[0];
@@ -17,6 +20,7 @@ export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
     return now.toTimeString().slice(0, 5);
   });
   const [duration, setDuration] = useState('30');
+  const [visibility, setVisibility] = useState('organisation');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -41,7 +45,7 @@ export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
       return;
     }
 
-    const scheduledDateTime = new Date(`${date}T${startTime}:00`);
+    const scheduledDateTime = isInstant ? new Date() : new Date(`${date}T${startTime}:00`);
     if (isNaN(scheduledDateTime.getTime())) {
       setError('Invalid date or time.');
       return;
@@ -68,7 +72,13 @@ export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
         scheduled_start: scheduledDateTime.toISOString(),
         expected_duration_minutes: parseInt(duration, 10) || 30,
         status: 'scheduled',
+        workspace_type: activeOrgId ? 'organisation' : 'individual',
+        organisation_id: activeOrgId || null,
       };
+
+      if (activeOrgId) {
+        payload.visibility = visibility;
+      }
 
       const { data, error: insertError } = await supabase.from('meetings').insert([payload]).select();
 
@@ -156,35 +166,90 @@ export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
             />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <div className="form-group">
-              <label className="form-label" htmlFor="meeting-date">
-                Date
-              </label>
-              <input
-                id="meeting-date"
-                type="date"
-                className="form-input"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label" htmlFor="meeting-time">
-                Start Time
-              </label>
-              <input
-                id="meeting-time"
-                type="time"
-                className="form-input"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                required
-              />
-            </div>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+            <button
+              type="button"
+              onClick={() => setIsInstant(true)}
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: 500,
+                border: isInstant ? '1px solid #0284C7' : '1px solid var(--border-color, #E2E8F0)',
+                backgroundColor: isInstant ? 'rgba(2, 132, 199, 0.08)' : 'transparent',
+                color: isInstant ? '#0284C7' : 'var(--text-secondary, #64748B)',
+                cursor: 'pointer',
+                transition: 'background-color 150ms ease, color 150ms ease, border-color 150ms ease',
+              }}
+            >
+              Join Immediately
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsInstant(false)}
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: 500,
+                border: !isInstant ? '1px solid #0284C7' : '1px solid var(--border-color, #E2E8F0)',
+                backgroundColor: !isInstant ? 'rgba(2, 132, 199, 0.08)' : 'transparent',
+                color: !isInstant ? '#0284C7' : 'var(--text-secondary, #64748B)',
+                cursor: 'pointer',
+                transition: 'background-color 150ms ease, color 150ms ease, border-color 150ms ease',
+              }}
+            >
+              Schedule for Later
+            </button>
           </div>
+
+          {!isInstant ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="meeting-date">
+                  Date
+                </label>
+                <input
+                  id="meeting-date"
+                  type="date"
+                  className="form-input"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  required={!isInstant}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="meeting-time">
+                  Start Time
+                </label>
+                <input
+                  id="meeting-time"
+                  type="time"
+                  className="form-input"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  required={!isInstant}
+                />
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                fontSize: '12.5px',
+                color: 'var(--text-secondary, #64748B)',
+                backgroundColor: 'rgba(2, 132, 199, 0.04)',
+                border: '1px dashed rgba(2, 132, 199, 0.25)',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                marginBottom: '14px',
+              }}
+            >
+              Bot will automatically attempt to join the call within seconds of saving.
+            </div>
+          )}
 
           <div className="form-group">
             <label className="form-label" htmlFor="meeting-duration">
@@ -204,12 +269,34 @@ export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
             </select>
           </div>
 
+          {activeOrgId && (
+            <div className="form-group">
+              <label className="form-label" htmlFor="meeting-visibility">
+                Visibility
+              </label>
+              <select
+                id="meeting-visibility"
+                className="form-input"
+                value={visibility}
+                onChange={(e) => setVisibility(e.target.value)}
+              >
+                <option value="organisation">Organisation — everyone in this org</option>
+                <option value="participants">Participants — invited speakers only</option>
+                <option value="private">Private — only me</option>
+              </select>
+              <p style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '6px', textWrap: 'pretty' }}>
+                Controls who can open this meeting&apos;s recordings, transcript
+                and MOM after it runs.
+              </p>
+            </div>
+          )}
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px' }}>
             <button type="button" className="btn-secondary" onClick={onClose} disabled={loading}>
               Cancel
             </button>
             <button type="submit" className="btn-primary" disabled={loading}>
-              {loading ? 'Scheduling...' : 'Schedule Meeting'}
+              {loading ? (isInstant ? 'Joining...' : 'Scheduling...') : (isInstant ? 'Join Meeting Now' : 'Schedule Meeting')}
             </button>
           </div>
         </form>

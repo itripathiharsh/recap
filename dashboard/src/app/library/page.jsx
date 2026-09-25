@@ -21,10 +21,12 @@ import {
   Trash2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
 import AddMeetingModal from '../../components/AddMeetingModal';
 import TopHeader from '../../components/TopHeader';
 
 export default function LibraryPage() {
+  const { activeOrgId } = useWorkspace();
   const [meetings, setMeetings] = useState([]);
   const [moms, setMoms] = useState([]);
   const [transcriptsCount, setTranscriptsCount] = useState(0);
@@ -51,22 +53,29 @@ export default function LibraryPage() {
     async function loadData() {
       try {
         setLoading(true);
-        const { data: meetData } = await supabase
-          .from('meetings')
-          .select('*')
-          .order('scheduled_start', { ascending: false });
+        const { data: meetData } = await applyWorkspaceScope(
+          supabase.from('meetings').select('*'),
+          activeOrgId
+        ).order('scheduled_start', { ascending: false });
+
+        const meetingIds = new Set((meetData || []).map((m) => m.id));
 
         const { data: momData } = await supabase.from('mom').select('*');
-        const { count: transCount } = await supabase
-          .from('transcripts')
-          .select('*', { count: 'exact', head: true });
+        let transCount = 0;
+        if (meetingIds.size > 0) {
+          const { count } = await supabase
+            .from('transcripts')
+            .select('*', { count: 'exact', head: true })
+            .in('meeting_id', Array.from(meetingIds));
+          transCount = count || 0;
+        }
 
         const { data: turnsData } = await supabase
           .from('speaker_turns')
           .select('meeting_id, speaker');
 
         const turnsMap = {};
-        (turnsData || []).forEach((t) => {
+        filterToMeetings(turnsData, meetingIds).forEach((t) => {
           if (!turnsMap[t.meeting_id]) turnsMap[t.meeting_id] = [];
           if (t.speaker && !turnsMap[t.meeting_id].includes(t.speaker)) {
             turnsMap[t.meeting_id].push(t.speaker);
@@ -74,10 +83,8 @@ export default function LibraryPage() {
         });
 
         setMeetings(meetData || []);
-        setMoms(momData || []);
-        if (transCount !== null && transCount !== undefined) {
-          setTranscriptsCount(transCount);
-        }
+        setMoms(filterToMeetings(momData, meetingIds));
+        setTranscriptsCount(transCount);
         setSpeakerTurns(turnsMap);
 
         // Fetch real Supabase Storage usage via RPC
@@ -108,7 +115,7 @@ export default function LibraryPage() {
       }
     }
     loadData();
-  }, []);
+  }, [activeOrgId]);
 
   // Map meeting id to MOM
   const momMap = useMemo(() => {

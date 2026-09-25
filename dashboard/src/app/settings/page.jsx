@@ -12,32 +12,45 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { applyWorkspaceScope, useWorkspace } from '../../lib/workspace';
 
 export default function SettingsPage() {
+  const { activeOrgId } = useWorkspace();
   const [activeSection, setActiveSection] = useState('general');
   const [supabaseConnected, setSupabaseConnected] = useState(null);
   const [dbStats, setDbStats] = useState({ meetings: 0, mom: 0 });
-  const [userProfile, setUserProfile] = useState({ name: 'Harsh Vardhan Tripathi', email: 'harsh@sentio.in' });
+  const [userProfile, setUserProfile] = useState({ name: '', email: '' });
 
   useEffect(() => {
     async function testConnection() {
       try {
-        const { count: mCount, error: mErr } = await supabase
-          .from('meetings')
-          .select('*', { count: 'exact', head: true });
+        const { count: mCount, error: mErr } = await applyWorkspaceScope(
+          supabase.from('meetings').select('*', { count: 'exact', head: true }),
+          activeOrgId
+        );
 
-        const { count: momCount, error: momErr } = await supabase
-          .from('mom')
-          .select('*', { count: 'exact', head: true });
+        let momCount = 0;
+        const { data: scopedMeetings } = await applyWorkspaceScope(
+          supabase.from('meetings').select('id'),
+          activeOrgId
+        );
+        const scopedIds = (scopedMeetings || []).map((m) => m.id);
+        if (scopedIds.length > 0) {
+          const { count } = await supabase
+            .from('mom')
+            .select('*', { count: 'exact', head: true })
+            .in('meeting_id', scopedIds);
+          momCount = count || 0;
+        }
 
         const { data: userData } = await supabase
           .from('User')
           .select('name, email')
           .limit(1)
-          .single();
+          .maybeSingle();
 
         if (userData?.name) {
-          setUserProfile({ name: userData.name, email: userData.email || 'harsh@sentio.in' });
+          setUserProfile({ name: userData.name, email: userData.email || '' });
         }
 
         if (mErr) throw mErr;
@@ -49,7 +62,7 @@ export default function SettingsPage() {
       }
     }
     testConnection();
-  }, []);
+  }, [activeOrgId]);
 
   const sections = [
     { id: 'general', label: 'General', icon: Sliders },

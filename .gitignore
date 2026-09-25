@@ -72,3 +72,6 @@ D/
 *.swp
 .cache/
 claude told  me/
+
+# --- Local Phase 1 verification baseline (contains production ids/counts) ---
+scripts/phase1_baseline.local.json

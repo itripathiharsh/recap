@@ -37,6 +37,12 @@ google-auth-oauthlib==1.2.1
 python-dotenv==1.0.1
 pydantic==2.9.2              # used for schema validation against SCHEMA.md shapes
 
+# --- API server & database (previously imported by src/ but undeclared here) ---
+fastapi==0.141.1             # src/api.py
+uvicorn==0.53.0              # systemd unit runs `uvicorn src.api:app`
+httpx==0.28.1                # FastAPI TestClient + heartbeat HTTP calls
+supabase==2.31.0             # src/supabase_client.py (service-role/RLS workspace work)
+
 # --- Dev tooling (see AGENT.md Section 4) ---
 pytest==8.3.3
 black==24.10.0

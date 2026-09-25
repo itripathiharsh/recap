@@ -17,10 +17,12 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
 import AddMeetingModal from '../../components/AddMeetingModal';
 import TopHeader from '../../components/TopHeader';
 
 export default function InsightsPage() {
+  const { activeOrgId } = useWorkspace();
   const [meetings, setMeetings] = useState([]);
   const [moms, setMoms] = useState([]);
   const [speakerTurns, setSpeakerTurns] = useState([]);
@@ -33,19 +35,20 @@ export default function InsightsPage() {
     async function loadData() {
       try {
         setLoading(true);
-        const { data: meetData } = await supabase
-          .from('meetings')
-          .select('*')
-          .order('scheduled_start', { ascending: false });
+        const { data: meetData } = await applyWorkspaceScope(
+          supabase.from('meetings').select('*'),
+          activeOrgId
+        ).order('scheduled_start', { ascending: false });
 
+        const meetingIds = new Set((meetData || []).map((m) => m.id));
         const { data: momData } = await supabase.from('mom').select('*');
-        const { data: turnsData } = await supabase.from('speaker_turns').select('speaker');
+        const { data: turnsData } = await supabase.from('speaker_turns').select('speaker, meeting_id');
 
         // Only calculate insights from genuine completed meetings
         const genuineMeetings = (meetData || []).filter((m) => m.status === 'completed');
         setMeetings(genuineMeetings);
-        setMoms(momData || []);
-        setSpeakerTurns(turnsData || []);
+        setMoms(filterToMeetings(momData, meetingIds));
+        setSpeakerTurns(filterToMeetings(turnsData, meetingIds));
       } catch (err) {
         console.error('Error loading insights data:', err);
       } finally {
@@ -53,7 +56,7 @@ export default function InsightsPage() {
       }
     }
     loadData();
-  }, []);
+  }, [activeOrgId]);
 
   // Calculated Metrics
   const totalMeetingsCount = meetings.length;

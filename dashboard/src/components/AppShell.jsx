@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Navigation from './Navigation';
 import { supabase } from '../lib/supabase';
+import { WorkspaceProvider } from '../lib/workspace';
 import { Loader2 } from 'lucide-react';
 
 export default function AppShell({ children }) {
@@ -37,20 +38,35 @@ export default function AppShell({ children }) {
       if (event === 'SIGNED_OUT' && !isPublicRoute) {
         router.replace('/login');
       } else if (event === 'SIGNED_IN' && pathname === '/login') {
-        router.replace('/dashboard');
+        window.location.href = '/dashboard';
       }
     });
 
     return () => {
       authListener?.subscription?.unsubscribe();
     };
-  }, []);
+  }, [isPublicRoute, pathname, router]);
 
-  // Protect private routes in-memory without re-requesting network session
+  // Protect private routes with getSession confirmation to avoid race condition
   useEffect(() => {
+    let isMounted = true;
     if (!loading && !session && !isPublicRoute) {
-      router.replace(`/login?redirectTo=${encodeURIComponent(pathname)}`);
+      supabase.auth.getSession().then(({ data }) => {
+        if (!isMounted) return;
+        if (data?.session) {
+          setSession(data.session);
+        } else {
+          router.replace(`/login?redirectTo=${encodeURIComponent(pathname)}`);
+        }
+      }).catch(() => {
+        if (isMounted) {
+          router.replace(`/login?redirectTo=${encodeURIComponent(pathname)}`);
+        }
+      });
     }
+    return () => {
+      isMounted = false;
+    };
   }, [loading, session, pathname, isPublicRoute, router]);
 
   // Landing page and Login page render without app chrome
@@ -98,10 +114,12 @@ export default function AppShell({ children }) {
   }
 
   return (
-    <div className="app-container">
-      <Navigation session={session} />
-      <main className="main-content">{children}</main>
-    </div>
+    <WorkspaceProvider session={session}>
+      <div className="app-container">
+        <Navigation session={session} />
+        <main className="main-content">{children}</main>
+      </div>
+    </WorkspaceProvider>
   );
 }
 
