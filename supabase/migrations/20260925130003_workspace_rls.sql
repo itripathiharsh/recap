@@ -21,7 +21,7 @@ alter table public.transcripts enable row level security;
 alter table public.speaker_turns enable row level security;
 alter table public.mom enable row level security;
 alter table public.system_events enable row level security;
-alter table public."User" enable row level security;
+alter table public.profiles enable row level security;
 
 -- ============================================================
 -- Drop any pre-existing policies on managed tables so no permissive
@@ -52,7 +52,7 @@ grant select, insert, update, delete
   on public.organisations, public.organisation_members,
      public.organisation_invitations, public.meeting_participants,
      public.meetings, public.jobs, public.transcripts,
-     public.speaker_turns, public.mom, public.system_events, public."User"
+     public.speaker_turns, public.mom, public.system_events, public.profiles
   to authenticated;
 
 -- ============================================================
@@ -231,19 +231,19 @@ create policy "system_events_delete" on public.system_events
   using (meeting_id is not null and public.can_manage_meeting(meeting_id));
 
 -- ============================================================
--- public."User" profile table: strictly self-only.
+-- public.profiles: strictly self-only, keyed on id (the auth user id).
 -- ============================================================
-create policy "user_select_self" on public."User"
+create policy "profiles_select_self" on public.profiles
   for select to authenticated
-  using (lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')));
+  using (id = auth.uid());
 
-create policy "user_insert_self" on public."User"
+create policy "profiles_insert_self" on public.profiles
   for insert to authenticated
-  with check (lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')));
+  with check (id = auth.uid());
 
-create policy "user_update_self" on public."User"
+create policy "profiles_update_self" on public.profiles
   for update to authenticated
-  using (lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')))
-  with check (lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')));
+  using (id = auth.uid())
+  with check (id = auth.uid());
 
 commit;

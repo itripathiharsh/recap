@@ -168,10 +168,13 @@ begin
   values (
     v_org.id, v_uid, 'owner', 'active',
     lower(coalesce(auth.jwt() ->> 'email', '')),
+-- `public."User"` does not exist in this project and is not created by any
+-- migration; the live profile table is `public.profiles` (id, name,
+-- avatar_url, created_at, updated_at). Reading the old table here made the
+-- whole file abort on apply.
     coalesce(
       nullif(auth.jwt() -> 'user_metadata' ->> 'name', ''),
-      (select u.name from public."User" u
-        where lower(u.email) = lower(coalesce(auth.jwt() ->> 'email', '')) limit 1),
+      (select p.name from public.profiles p where p.id = v_uid),
       split_part(coalesce(auth.jwt() ->> 'email', ''), '@', 1)
     )
   );
@@ -334,7 +337,7 @@ begin
     v_email,
     coalesce(
       nullif(auth.jwt() -> 'user_metadata' ->> 'name', ''),
-      (select u.name from public."User" u where lower(u.email) = v_email limit 1),
+      (select p.name from public.profiles p where p.id = v_uid),
       split_part(v_email, '@', 1)
     )
   )
@@ -491,7 +494,10 @@ end;
 $$;
 
 -- ============================================================
--- RPC: ensure a public."User" profile row exists for the caller
+-- RPC: ensure a public.profiles row exists for the caller.
+-- Previously targeted public."User", which does not exist in this
+-- project; profiles is the live table and the live deployed
+-- version of this function already writes there.
 -- ============================================================
 create or replace function public.ensure_my_profile(p_name text default null)
 returns void
@@ -500,23 +506,25 @@ security definer
 set search_path = public
 as $$
 declare
+  v_uid   uuid := auth.uid();
   v_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
   v_name  text := nullif(trim(coalesce(p_name, '')), '');
 begin
-  if v_email = '' then
+  if v_uid is null or v_email = '' then
     return;
   end if;
 
-  if exists (select 1 from public."User" u where lower(u.email) = v_email) then
+  if exists (select 1 from public.profiles p where p.id = v_uid) then
     if v_name is not null then
-      update public."User" set name = v_name where lower(email) = v_email and (name is null or name = '');
+      update public.profiles p set name = v_name
+      where p.id = v_uid and (p.name is null or p.name = '');
     end if;
     return;
   end if;
 
-  insert into public."User" (email, name)
-  values (v_email, coalesce(v_name, v_email))
-  on conflict do nothing;
+  insert into public.profiles (id, name, created_at, updated_at)
+  values (v_uid, coalesce(v_name, v_email), now(), now())
+  on conflict (id) do nothing;
 end;
 $$;
 
