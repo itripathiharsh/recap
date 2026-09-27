@@ -40,6 +40,7 @@ import { supabase } from '../../../lib/supabase';
 import { applyWorkspaceScope, useWorkspace } from '../../../lib/workspace';
 import { formatDateTime, formatDuration } from '../../../lib/format';
 import { speakingShare, isPlaceholderSpeaker } from '../../../lib/metrics';
+import { unwrap, toMessage } from '../../../lib/supabaseError';
 import MeetingHeroArt from '../../../components/MeetingHeroArt';
 
 // Color ramp for participants
@@ -64,6 +65,7 @@ export default function MeetingDetailPage() {
   const [mom, setMom] = useState(null);
   const [loading, setLoading] = useState(true);
   const [outOfScope, setOutOfScope] = useState(false);
+  const [loadError, setLoadError] = useState(null);
 
   // Tabs & Views
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'transcript' | 'speakers' | 'audio' | 'files'
@@ -102,7 +104,10 @@ export default function MeetingDetailPage() {
   const fetchDetails = async (isInitial = false) => {
     if (!meetingId) return;
     try {
-      if (isInitial) setLoading(true);
+      if (isInitial) {
+        setLoading(true);
+        setLoadError(null);
+      }
       // Scope by workspace: a meeting id from the other workspace must not resolve.
       const { data: meetData, error: meetError } = await applyWorkspaceScope(
         supabase.from('meetings').select('*').eq('id', meetingId).single(),
@@ -125,28 +130,28 @@ export default function MeetingDetailPage() {
       setMeeting(meetData);
       setOutOfScope(false);
 
-      const { data: transData } = await supabase
-        .from('transcripts')
-        .select('*')
-        .eq('meeting_id', meetingId)
-        .limit(1);
-      if (transData && transData.length > 0) setTranscript(transData[0]);
+      // These three reads are independent, so one denied table must not hide
+      // the others. A read error is surfaced rather than silently rendered as
+      // "no transcript / no summary available", which is a false empty state.
+      const [transRes, turnsRes, momRes] = await Promise.all([
+        supabase.from('transcripts').select('*').eq('meeting_id', meetingId).limit(1),
+        supabase
+          .from('speaker_turns')
+          .select('*')
+          .eq('meeting_id', meetingId)
+          .order('start_time', { ascending: true }),
+        supabase.from('mom').select('*').eq('meeting_id', meetingId).limit(1),
+      ]);
 
-      const { data: turnsData } = await supabase
-        .from('speaker_turns')
-        .select('*')
-        .eq('meeting_id', meetingId)
-        .order('start_time', { ascending: true });
-      if (turnsData) setSpeakerTurns(turnsData);
+      if (transRes.error) throw transRes.error;
+      if (turnsRes.error) throw turnsRes.error;
+      if (momRes.error) throw momRes.error;
 
-      const { data: momData } = await supabase
-        .from('mom')
-        .select('*')
-        .eq('meeting_id', meetingId)
-        .limit(1);
-      if (momData && momData.length > 0) setMom(momData[0]);
+      setTranscript(transRes.data && transRes.data.length > 0 ? transRes.data[0] : null);
+      setSpeakerTurns(turnsRes.data || []);
+      setMom(momRes.data && momRes.data.length > 0 ? momRes.data[0] : null);
     } catch (err) {
-      console.error('Error fetching meeting details:', err);
+      setLoadError(toMessage(err, 'Could not load this meeting.'));
       if (isInitial) setLoading(false);
     } finally {
       if (isInitial) setLoading(false);
@@ -175,18 +180,25 @@ export default function MeetingDetailPage() {
       return;
     }
     const cleanName = newSpeakerName.trim();
+    const previous = speakerTurns;
     try {
-      await supabase
-        .from('speaker_turns')
-        .update({ speaker: cleanName })
-        .eq('meeting_id', meetingId)
-        .eq('speaker', oldName);
+      // Applied optimistically, so it must be rolled back if the write is
+      // denied; supabase-js resolves rather than throws on a PostgREST error.
+      unwrap(
+        await supabase
+          .from('speaker_turns')
+          .update({ speaker: cleanName })
+          .eq('meeting_id', meetingId)
+          .eq('speaker', oldName),
+        'speaker'
+      );
 
       setSpeakerTurns(prev =>
         prev.map(turn => (turn.speaker === oldName ? { ...turn, speaker: cleanName } : turn))
       );
     } catch (err) {
-      console.error('Failed to rename speaker:', err);
+      setSpeakerTurns(previous);
+      showToast(toMessage(err, `Could not rename ${oldName}. Please try again.`));
     } finally {
       setEditingSpeaker(null);
       setNewSpeakerName('');
@@ -195,8 +207,9 @@ export default function MeetingDetailPage() {
 
   // Toggle Action Item Checkbox & Persist to Supabase
   const handleToggleActionItem = async (index) => {
-    if (!mom || !mom.action_items) return;
-    const updated = mom.action_items.map((item, idx) => {
+    if (!mom || !Array.isArray(mom.action_items)) return;
+    const previous = mom.action_items;
+    const updated = previous.map((item, idx) => {
       if (idx === index) {
         const isObj = typeof item === 'object' && item !== null;
         const currentCompleted = isObj ? !!item.completed : false;
@@ -208,12 +221,18 @@ export default function MeetingDetailPage() {
     setMom(prev => ({ ...prev, action_items: updated }));
 
     try {
-      await supabase
-        .from('mom')
-        .update({ action_items: updated, updated_at: new Date().toISOString() })
-        .eq('meeting_id', meetingId);
+      // supabase-js resolves on HTTP error codes; it does not throw. A denied
+      // or failed write must be detected here or the checkbox lies to the user.
+      unwrap(
+        await supabase
+          .from('mom')
+          .update({ action_items: updated, updated_at: new Date().toISOString() })
+          .eq('meeting_id', meetingId),
+        'action item'
+      );
     } catch (err) {
-      console.error('Failed to persist action item checkbox state:', err);
+      setMom(prev => (prev ? { ...prev, action_items: previous } : prev));
+      showToast(toMessage(err, 'Could not save that change. Please try again.'));
     }
   };
 
@@ -223,21 +242,43 @@ export default function MeetingDetailPage() {
       return;
     }
     try {
-      await supabase.storage.from('recordings').remove([`${meetingId}/audio.wav`]);
-      await supabase.from('speaker_turns').delete().eq('meeting_id', meetingId);
-      await supabase.from('mom').delete().eq('meeting_id', meetingId);
-      await supabase.from('transcripts').delete().eq('meeting_id', meetingId);
-      await supabase.from('jobs').delete().eq('meeting_id', meetingId);
-      await supabase.from('system_events').delete().eq('meeting_id', meetingId);
-      await applyWorkspaceScope(
-        supabase.from('meetings').delete().eq('id', meetingId),
-        activeOrgId
+      // Delete the scoped meeting row FIRST. It is the permission gate, and
+      // supabase-js does not throw on error, so if it is deleted after the
+      // children a denied delete would leave the meeting with its transcript,
+      // MOM and jobs already destroyed and no error shown.
+      unwrap(
+        await applyWorkspaceScope(
+          supabase.from('meetings').delete().eq('id', meetingId),
+          activeOrgId
+        ),
+        'meeting'
       );
 
+      // Parent is gone, so the meeting is already deleted from the user's
+      // point of view. Child cleanup is now best-effort: report it, but do
+      // not block the navigation or claim a failure that did not happen.
+      const childErrors = [];
+      const cleanup = [
+        ['audio', supabase.storage.from('recordings').remove([`${meetingId}/audio.wav`])],
+        ['speaker_turns', supabase.from('speaker_turns').delete().eq('meeting_id', meetingId)],
+        ['mom', supabase.from('mom').delete().eq('meeting_id', meetingId)],
+        ['transcripts', supabase.from('transcripts').delete().eq('meeting_id', meetingId)],
+        ['jobs', supabase.from('jobs').delete().eq('meeting_id', meetingId)],
+        ['system_events', supabase.from('system_events').delete().eq('meeting_id', meetingId)],
+      ];
+      const results = await Promise.all(cleanup.map(([, p]) => p));
+      results.forEach((r, i) => {
+        if (r && r.error) childErrors.push(cleanup[i][0]);
+      });
+
       router.push('/meetings');
+      if (childErrors.length > 0) {
+        console.error(
+          `[delete] meeting ${meetingId} deleted, but cleanup failed for: ${childErrors.join(', ')}`
+        );
+      }
     } catch (err) {
-      console.error('Failed to delete meeting:', err);
-      alert('Failed to delete meeting. Please try again.');
+      alert(toMessage(err, 'Failed to delete meeting. Please try again.'));
     }
   };
 
@@ -423,7 +464,11 @@ export default function MeetingDetailPage() {
     return (
       <div style={{ padding: '60px 0', textAlign: 'center' }}>
         <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#0F172A', marginBottom: '8px' }}>
-          {outOfScope ? 'Not in this workspace' : 'Meeting not found'}
+          {loadError
+            ? 'Could not load this meeting'
+            : outOfScope
+              ? 'Not in this workspace'
+              : 'Meeting not found'}
         </h2>
         <p
           style={{
@@ -435,13 +480,22 @@ export default function MeetingDetailPage() {
             textWrap: 'pretty',
           }}
         >
-          {outOfScope
-            ? 'This meeting belongs to a different workspace. Switch workspaces to open it.'
-            : 'The meeting may have been deleted, or the link is incorrect.'}
+          {loadError
+            ? loadError
+            : outOfScope
+              ? 'This meeting belongs to a different workspace. Switch workspaces to open it.'
+              : 'The meeting may have been deleted, or the link is incorrect.'}
         </p>
-        <Link href="/meetings" className="md-btn-outline" style={{ display: 'inline-flex' }}>
-          Back to Meetings
-        </Link>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+          {loadError && (
+            <button type="button" className="md-btn-outline" onClick={() => fetchDetails(true)}>
+              Try again
+            </button>
+          )}
+          <Link href="/meetings" className="md-btn-outline" style={{ display: 'inline-flex' }}>
+            Back to Meetings
+          </Link>
+        </div>
       </div>
     );
   }
