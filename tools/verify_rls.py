@@ -58,12 +58,14 @@ if not URL or not ANON:
     sys.exit(2)
 
 
-def http(path: str, key: str, method: str = "GET", body=None, timeout: int = 25):
+def http(path: str, key: str = "", method: str = "GET", body=None, timeout: int = 25):
+    target_url = path if path.startswith("http") else f"{URL}{path}"
     req = urllib.request.Request(
-        f"{URL}{path}", method=method, data=body.encode() if body else None
+        target_url, method=method, data=body.encode() if body else None
     )
-    req.add_header("apikey", key)
-    req.add_header("Authorization", f"Bearer {key}")
+    if key:
+        req.add_header("apikey", key)
+        req.add_header("Authorization", f"Bearer {key}")
     req.add_header("Accept", "application/json")
     if body:
         req.add_header("Content-Type", "application/json")
@@ -217,7 +219,7 @@ def main() -> int:
         req.add_header("Authorization", f"Bearer {SVC}")
         req.add_header("Accept", "application/openapi+json")
         spec = json.loads(_u.urlopen(req, timeout=40).read().decode())
-        live = {p.strip("/") for p in spec.get("paths", {}) if p.startswith("/rpc/")}
+        live = {p.removeprefix("/rpc/") for p in spec.get("paths", {}) if p.startswith("/rpc/")}
         for fn in required:
             check(f"RPC {fn} exists", fn in live)
         if "can_view_meeting" in live:

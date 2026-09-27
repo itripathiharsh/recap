@@ -95,7 +95,7 @@ export async function searchWorkspace({ activeOrgId, query, limit = 12 }) {
           .from('mom')
           .select('meeting_id, decisions')
           .in('meeting_id', scopedIds)
-          .ilike('decisions::text', pattern)
+          .ilike('decisions_text', pattern)
           .limit(200),
     },
     {
@@ -105,7 +105,7 @@ export async function searchWorkspace({ activeOrgId, query, limit = 12 }) {
           .from('mom')
           .select('meeting_id, action_items')
           .in('meeting_id', scopedIds)
-          .ilike('action_items::text', pattern)
+          .ilike('action_items_text', pattern)
           .limit(200),
     },
   ];

@@ -85,6 +85,17 @@ begin
       add constraint organisation_invitations_role_check
       check (role in ('admin', 'member', 'viewer'));
   end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.organisation_members'::regclass
+      and contype = 'u'
+      and conname = 'organisation_members_org_user_unique'
+  ) then
+    alter table public.organisation_members
+      add constraint organisation_members_org_user_unique
+      unique (organisation_id, user_id);
+  end if;
 end;
 $$;
 
@@ -127,25 +138,19 @@ as $$
     from public.meetings m
     where m.id = p_meeting_id
       and (
-        -- the owner always sees their own meeting
         coalesce(m.owner_id, m.user_id) = auth.uid()
-        -- an active member of the owning organisation
-        or (
-          m.organisation_id is not null
-          and exists (
-            select 1
-            from public.organisation_members om
-            where om.organisation_id = m.organisation_id
-              and om.user_id = auth.uid()
-              and om.status = 'active'
-          )
-        )
-        -- an explicitly listed participant
         or exists (
           select 1
           from public.meeting_participants mp
           where mp.meeting_id = m.id
             and mp.user_id = auth.uid()
+        )
+        or (
+          m.organisation_id is not null
+          and (
+            (m.visibility = 'organisation' and public.is_org_member(m.organisation_id))
+            or (m.visibility = 'admin' and public.is_org_admin(m.organisation_id))
+          )
         )
       )
   );
@@ -186,10 +191,22 @@ grant execute on function public.can_access_meeting(uuid) to authenticated, serv
 grant execute on function public.can_manage_meeting(uuid) to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
--- 3. RLS on the six leaking content tables
---    Each is reached only through meeting_id, so every policy delegates to
---    can_access_meeting / can_manage_meeting.
+-- 3. RLS on the content tables
 -- ---------------------------------------------------------------------------
+-- Drop legacy wide-open policies from prior migrations
+drop policy if exists anon_meetings on public.meetings;
+drop policy if exists anon_jobs on public.jobs;
+drop policy if exists anon_transcripts on public.transcripts;
+drop policy if exists anon_speaker_turns on public.speaker_turns;
+drop policy if exists anon_mom on public.mom;
+drop policy if exists anon_system_events on public.system_events;
+
+drop policy if exists jobs_auth on public.jobs;
+drop policy if exists transcripts_auth on public.transcripts;
+drop policy if exists speaker_turns_auth on public.speaker_turns;
+drop policy if exists mom_auth on public.mom;
+drop policy if exists system_events_auth on public.system_events;
+
 alter table public.meetings            enable row level security;
 alter table public.transcripts         enable row level security;
 alter table public.mom                 enable row level security;
@@ -200,7 +217,21 @@ alter table public.system_events       enable row level security;
 drop policy if exists meetings_select on public.meetings;
 create policy meetings_select on public.meetings
   for select to authenticated
-  using (public.can_access_meeting(id));
+  using (
+    coalesce(owner_id, user_id) = auth.uid()
+    or exists (
+      select 1 from public.meeting_participants mp
+      where mp.meeting_id = meetings.id
+        and mp.user_id = auth.uid()
+    )
+    or (
+      organisation_id is not null
+      and (
+        (visibility = 'organisation' and public.is_org_member(organisation_id))
+        or (visibility = 'admin' and public.is_org_admin(organisation_id))
+      )
+    )
+  );
 
 drop policy if exists meetings_insert on public.meetings;
 create policy meetings_insert on public.meetings
@@ -352,9 +383,12 @@ begin
   returning * into v_org;
 
   insert into public.organisation_members
-    (organisation_id, user_id, role, status, created_at, updated_at)
+    (organisation_id, user_id, role, status, email, display_name, created_at, updated_at)
   values
-    (v_org.id, v_uid, 'owner', 'active', now(), now());
+    (v_org.id, v_uid, 'owner', 'active',
+     (select email from auth.users where id = v_uid),
+     (select coalesce(raw_user_meta_data ->> 'full_name', email) from auth.users where id = v_uid),
+     now(), now());
 
   -- Guarantee the settings row exists, mirroring the trigger below.
   insert into public.organisation_settings (organisation_id)
@@ -408,8 +442,42 @@ begin
     where i.organisation_id = p_organisation_id
       and lower(i.email) = lower(btrim(p_email))
       and i.status = 'pending'
+      and i.expires_at > now()
   ) then
     raise exception 'This person has already been invited' using errcode = '23505';
+  end if;
+
+  -- Expire stale pending invitations for this email
+  update public.organisation_invitations
+  set status = 'expired', updated_at = now()
+  where organisation_id = p_organisation_id
+    and lower(email) = lower(btrim(p_email))
+    and status = 'pending'
+    and expires_at <= now();
+
+  -- Reuse the most recent non-pending row (revoked/expired/accepted) instead
+  -- of accumulating duplicate rows for the same email
+  with target as (
+    select id
+    from public.organisation_invitations
+    where organisation_id = p_organisation_id
+      and lower(email) = lower(btrim(p_email))
+      and status <> 'pending'
+    order by created_at desc
+    limit 1
+  )
+  update public.organisation_invitations i
+     set role = p_role,
+         invited_by = v_uid,
+         status = 'pending',
+         expires_at = now() + interval '7 days',
+         updated_at = now()
+  from target t
+  where i.id = t.id
+  returning i.* into v_inv;
+
+  if found then
+    return v_inv;
   end if;
 
   insert into public.organisation_invitations
@@ -605,7 +673,7 @@ begin
     and om.user_id = v_uid and om.status = 'active';
 
   if v_actor is null or v_actor not in ('owner', 'admin') then
-    raise exception 'Only organisation admins can remove members' using errcode = '42501';
+    raise exception 'Only organisation owners and admins can remove members' using errcode = '42501';
   end if;
 
   select om.role into v_target_role
@@ -623,8 +691,7 @@ begin
     raise exception 'Only the organisation owner can remove an admin' using errcode = '42501';
   end if;
 
-  update public.organisation_members
-  set status = 'removed', updated_at = now()
+  delete from public.organisation_members
   where organisation_id = p_organisation_id and user_id = p_target_user_id;
 
   return true;
@@ -688,6 +755,29 @@ on conflict (id) do update
       file_size_limit = excluded.file_size_limit,
       allowed_mime_types = excluded.allowed_mime_types;
 
+-- Helper function to safely extract meeting UUID from storage object name.
+-- Prevents SQL type casting exceptions when non-UUID paths are evaluated.
+create or replace function public.storage_meeting_id(p_name text)
+returns uuid
+language plpgsql
+immutable
+as $$
+declare
+  v_folder text;
+begin
+  v_folder := (storage.foldername(p_name))[1];
+  if v_folder is not null and v_folder ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return v_folder::uuid;
+  end if;
+  return null;
+exception when others then
+  return null;
+end;
+$$;
+
+revoke all on function public.storage_meeting_id(text) from public;
+grant execute on function public.storage_meeting_id(text) to authenticated, service_role;
+
 -- Recordings are stored as "<meeting_id>/audio.wav", so the first path segment
 -- is the meeting id.
 drop policy if exists "recordings read authorised" on storage.objects;
@@ -695,7 +785,7 @@ create policy "recordings read authorised" on storage.objects
   for select to authenticated
   using (
     bucket_id = 'recordings'
-    and public.can_access_meeting((storage.foldername(name))[1]::uuid)
+    and public.can_access_meeting(public.storage_meeting_id(name))
   );
 
 drop policy if exists "recordings write owner or admin" on storage.objects;
@@ -703,7 +793,7 @@ create policy "recordings write owner or admin" on storage.objects
   for insert to authenticated
   with check (
     bucket_id = 'recordings'
-    and public.can_manage_meeting((storage.foldername(name))[1]::uuid)
+    and public.can_manage_meeting(public.storage_meeting_id(name))
   );
 
 drop policy if exists "recordings delete owner or admin" on storage.objects;
@@ -711,7 +801,7 @@ create policy "recordings delete owner or admin" on storage.objects
   for delete to authenticated
   using (
     bucket_id = 'recordings'
-    and public.can_manage_meeting((storage.foldername(name))[1]::uuid)
+    and public.can_manage_meeting(public.storage_meeting_id(name))
   );
 
 -- No policy grants anon anything on this bucket; storage.objects is RLS-enabled

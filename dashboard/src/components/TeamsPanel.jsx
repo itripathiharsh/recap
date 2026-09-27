@@ -1,6 +1,6 @@
-﻿'use client';
+'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Users,
@@ -10,6 +10,7 @@ import {
   Search as SearchIcon,
   MoreHorizontal,
   Trash2,
+  Edit2,
   ChevronDown,
   ChevronRight,
   Database,
@@ -126,67 +127,69 @@ export default function TeamsPanel() {
   const [newDescription, setNewDescription] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTeamData, setEditTeamData] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+
+  const [membersModalOpen, setMembersModalOpen] = useState(false);
+  const [managingTeam, setManagingTeam] = useState(null);
+  const [selectedUserToAdd, setSelectedUserToAdd] = useState('');
+
   const canManage = activeOrgRole === 'owner' || activeOrgRole === 'admin';
 
   /* ------------------------------------------------------------------ load */
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      if (!activeOrgId) {
-        setRealTeams(null);
-        setMembers([]);
-        setMeetings([]);
-        return;
-      }
-      try {
-        const [teamsRes, tmRes, memberRes, meetingRes, turnRes] = await Promise.all([
-          supabase
-            .from('teams')
-            .select('id, name, description, color, meeting_data_access, library_access, export_downloads, created_at')
-            .eq('organisation_id', activeOrgId)
-            .order('created_at', { ascending: true }),
-          supabase.from('team_members').select('team_id, user_id').eq('organisation_id', activeOrgId),
-          supabase
-            .from('organisation_members')
-            .select('id, user_id, role, status, email, display_name')
-            .eq('organisation_id', activeOrgId),
-          applyWorkspaceScope(
-            supabase.from('meetings').select('id, title, team_id, started_at, scheduled_start, created_at'),
-            activeOrgId
-          ),
-          supabase.from('speaker_turns').select('meeting_id, speaker'),
-        ]);
-
-        if (cancelled) return;
-
-        // A missing `teams` table is the expected pre-migration state.
-        setRealTeams(teamsRes.error ? null : teamsRes.data || []);
-        setTeamMembers(tmRes.error ? [] : tmRes.data || []);
-        setMembers(memberRes.data || []);
-
-        const scoped = meetingRes.data || [];
-        const ids = new Set(scoped.map((m) => m.id));
-        const byMeeting = {};
-        (turnRes.data || []).forEach((t) => {
-          if (!ids.has(t.meeting_id)) return;
-          if (!byMeeting[t.meeting_id]) byMeeting[t.meeting_id] = new Set();
-          if (t.speaker && t.speaker.trim()) byMeeting[t.meeting_id].add(t.speaker.trim());
-        });
-
-        setMeetings(scoped);
-        setSpeakerTurns(byMeeting);
-      } catch (err) {
-        console.error('Teams load error:', err);
-      }
+  const load = useCallback(async () => {
+    if (!activeOrgId) {
+      setRealTeams(null);
+      setMembers([]);
+      setMeetings([]);
+      return;
     }
+    try {
+      const [teamsRes, tmRes, memberRes, meetingRes, turnRes] = await Promise.all([
+        supabase
+          .from('teams')
+          .select('id, name, description, color, meeting_data_access, library_access, export_downloads, created_at')
+          .eq('organisation_id', activeOrgId)
+          .order('created_at', { ascending: true }),
+        supabase.from('team_members').select('team_id, user_id').eq('organisation_id', activeOrgId),
+        supabase
+          .from('organisation_members')
+          .select('id, user_id, role, status, email, display_name')
+          .eq('organisation_id', activeOrgId),
+        applyWorkspaceScope(
+          supabase.from('meetings').select('id, title, team_id, started_at, scheduled_start, created_at'),
+          activeOrgId
+        ),
+        supabase.from('speaker_turns').select('meeting_id, speaker'),
+      ]);
 
-    load();
-    return () => {
-      cancelled = true;
-    };
+      // A missing `teams` table is the expected pre-migration state.
+      setRealTeams(teamsRes.error ? null : teamsRes.data || []);
+      setTeamMembers(tmRes.error ? [] : tmRes.data || []);
+      setMembers(memberRes.data || []);
+
+      const scoped = meetingRes.data || [];
+      const ids = new Set(scoped.map((m) => m.id));
+      const byMeeting = {};
+      (turnRes.data || []).forEach((t) => {
+        if (!ids.has(t.meeting_id)) return;
+        if (!byMeeting[t.meeting_id]) byMeeting[t.meeting_id] = new Set();
+        if (t.speaker && t.speaker.trim()) byMeeting[t.meeting_id].add(t.speaker.trim());
+      });
+
+      setMeetings(scoped);
+      setSpeakerTurns(byMeeting);
+    } catch (err) {
+      console.error('Teams load error:', err);
+    }
   }, [activeOrgId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   useEffect(() => {
     setPage(1);
@@ -365,11 +368,108 @@ export default function TeamsPanel() {
     }
   };
 
+  const openEditModal = (team) => {
+    setRowMenuOpen(null);
+    setEditTeamData(team);
+    setEditName(team.name);
+    setEditDescription(team.description || '');
+    setEditOpen(true);
+  };
+
+  const updateTeam = async (e) => {
+    e.preventDefault();
+    if (!editName.trim() || !editTeamData) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      unwrap(
+        await supabase
+          .from('teams')
+          .update({
+            name: editName.trim(),
+            description: editDescription.trim() || null,
+          })
+          .eq('id', editTeamData.key),
+        'update team'
+      );
+      setEditOpen(false);
+      setStatus({ kind: 'ok', text: `Updated ${editName.trim()}.` });
+      await load();
+    } catch (err) {
+      setStatus({
+        kind: 'error',
+        text: toMessage(classifyError(err), "We couldn't update the team. Please try again."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openMembersModal = (team) => {
+    setRowMenuOpen(null);
+    setManagingTeam(team);
+    setSelectedUserToAdd('');
+    setMembersModalOpen(true);
+  };
+
+  const addMemberToTeam = async (userId) => {
+    if (!userId || !managingTeam) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      unwrap(
+        await supabase.from('team_members').insert({
+          team_id: managingTeam.key,
+          user_id: userId,
+          organisation_id: activeOrgId,
+        }),
+        'add team member'
+      );
+      setStatus({ kind: 'ok', text: 'Member added to team.' });
+      setSelectedUserToAdd('');
+      await load();
+    } catch (err) {
+      setStatus({
+        kind: 'error',
+        text: toMessage(classifyError(err), "We couldn't add that member. Please try again."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeMemberFromTeam = async (userId) => {
+    if (!userId || !managingTeam) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      unwrap(
+        await supabase
+          .from('team_members')
+          .delete()
+          .eq('team_id', managingTeam.key)
+          .eq('user_id', userId),
+        'remove team member'
+      );
+      setStatus({ kind: 'ok', text: 'Member removed from team.' });
+      await load();
+    } catch (err) {
+      setStatus({
+        kind: 'error',
+        text: toMessage(classifyError(err), "We couldn't remove that member. Please try again."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const deleteTeam = async (row) => {
     setRowMenuOpen(null);
     if (!window.confirm(`Delete the ${row.name} team? Meetings are not deleted.`)) return;
     setStatus(null);
     try {
+      await supabase.from('team_members').delete().eq('team_id', row.key);
+      await supabase.from('meetings').update({ team_id: null }).eq('team_id', row.key);
       unwrap(await supabase.from('teams').delete().eq('id', row.key), 'delete team');
       setStatus({ kind: 'ok', text: `Deleted ${row.name}.` });
       await load();
@@ -666,6 +766,22 @@ export default function TeamsPanel() {
                                 <div className="org-tm-menu" role="menu">
                                   <button
                                     type="button"
+                                    className="org-tm-menu-item"
+                                    onClick={() => openEditModal(t)}
+                                  >
+                                    <Edit2 size={13} aria-hidden="true" />
+                                    Rename team
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="org-tm-menu-item"
+                                    onClick={() => openMembersModal(t)}
+                                  >
+                                    <UserPlus size={13} aria-hidden="true" />
+                                    Manage members
+                                  </button>
+                                  <button
+                                    type="button"
                                     className="org-tm-menu-item danger"
                                     onClick={() => deleteTeam(t)}
                                   >
@@ -906,6 +1022,239 @@ export default function TeamsPanel() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* edit team modal */}
+      {editOpen && editTeamData && (
+        <div className="modal-overlay" onClick={() => setEditOpen(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>Rename / Edit Team</h2>
+              <button
+                type="button"
+                onClick={() => setEditOpen(false)}
+                style={{ color: 'var(--text-secondary)', padding: 2, borderRadius: 4, background: 'none', border: 'none', cursor: 'pointer' }}
+                aria-label="Close"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+
+            {status?.kind === 'error' && (
+              <div className="org-tm-notice error" style={{ marginBottom: 14 }}>
+                <AlertCircle size={14} aria-hidden="true" />
+                <span>{status.text}</span>
+              </div>
+            )}
+
+            <form onSubmit={updateTeam}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="tm-edit-name">
+                  Team Name
+                </label>
+                <input
+                  id="tm-edit-name"
+                  type="text"
+                  className="form-input"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="tm-edit-desc">
+                  Description
+                </label>
+                <textarea
+                  id="tm-edit-desc"
+                  className="form-input"
+                  rows={3}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+                <button type="button" className="btn-secondary" onClick={() => setEditOpen(false)} disabled={busy}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={busy}>
+                  {busy ? 'Saving…' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* manage members modal */}
+      {membersModalOpen && managingTeam && (
+        <div className="modal-overlay" onClick={() => setMembersModalOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <div>
+                <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  Manage Members — {managingTeam.name}
+                </h2>
+                <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                  Assign organisation members to collaborate in this team.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMembersModalOpen(false)}
+                style={{ color: 'var(--text-secondary)', padding: 2, borderRadius: 4, background: 'none', border: 'none', cursor: 'pointer' }}
+                aria-label="Close"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+
+            {status?.kind === 'error' && (
+              <div className="org-tm-notice error" style={{ marginBottom: 14 }}>
+                <AlertCircle size={14} aria-hidden="true" />
+                <span>{status.text}</span>
+              </div>
+            )}
+            {status?.kind === 'ok' && (
+              <div className="org-tm-notice ok" style={{ marginBottom: 14 }}>
+                <Check size={14} aria-hidden="true" />
+                <span>{status.text}</span>
+              </div>
+            )}
+
+            {/* Current team members list */}
+            <div style={{ marginBottom: 20 }}>
+              <label className="form-label" style={{ marginBottom: 8, display: 'block' }}>
+                Current Team Members ({teamMembers.filter((tm) => tm.team_id === managingTeam.key).length})
+              </label>
+              <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 8, padding: 8 }}>
+                {(() => {
+                  const currentIds = teamMembers.filter((tm) => tm.team_id === managingTeam.key).map((tm) => tm.user_id);
+                  const currentList = members.filter((m) => currentIds.includes(m.user_id));
+                  if (currentList.length === 0) {
+                    return (
+                      <p style={{ fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center', padding: '12px 0' }}>
+                        No members assigned to this team yet.
+                      </p>
+                    );
+                  }
+                  return currentList.map((m) => (
+                    <div
+                      key={m.user_id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '6px 8px',
+                        borderBottom: '1px solid var(--border-color)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span
+                          style={{
+                            width: 26,
+                            height: 26,
+                            borderRadius: '50%',
+                            background: '#E0E7FF',
+                            color: '#3730A3',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {(m.display_name || m.email || 'M').charAt(0).toUpperCase()}
+                        </span>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+                            {m.display_name || m.email?.split('@')[0]}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{m.email}</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeMemberFromTeam(m.user_id)}
+                        disabled={busy}
+                        style={{
+                          fontSize: 12,
+                          color: '#EF4444',
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ));
+                })()}
+              </div>
+            </div>
+
+            {/* Add new member form */}
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 14 }}>
+              <label className="form-label" style={{ marginBottom: 6, display: 'block' }}>
+                Add Member to Team
+              </label>
+              {(() => {
+                const assignedIds = new Set(
+                  teamMembers.filter((tm) => tm.team_id === managingTeam.key).map((tm) => tm.user_id)
+                );
+                const unassignedMembers = members.filter((m) => !assignedIds.has(m.user_id));
+
+                if (unassignedMembers.length === 0) {
+                  return (
+                    <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                      All workspace members are already assigned to this team.
+                    </p>
+                  );
+                }
+
+                return (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <select
+                      className="form-input"
+                      value={selectedUserToAdd}
+                      onChange={(e) => setSelectedUserToAdd(e.target.value)}
+                      style={{ flex: 1 }}
+                    >
+                      <option value="">Select a member...</option>
+                      {unassignedMembers.map((m) => (
+                        <option key={m.user_id} value={m.user_id}>
+                          {m.display_name || m.email} ({m.role})
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => addMemberToTeam(selectedUserToAdd)}
+                      disabled={!selectedUserToAdd || busy}
+                    >
+                      Add
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setMembersModalOpen(false)}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
