@@ -64,6 +64,9 @@ export async function searchWorkspace({ activeOrgId, query, limit = 12 }) {
   if (scopedIds.length === 0) return { meetings: [], query: q };
   const scopedSet = new Set(scopedIds);
 
+  // The content tables carry no organisation_id, so the tenant boundary is
+  // pushed into the query itself: only meeting ids already resolved as
+  // belonging to this workspace are ever requested.
   const contentHits = [
     {
       field: 'transcript',
@@ -71,6 +74,7 @@ export async function searchWorkspace({ activeOrgId, query, limit = 12 }) {
         supabase
           .from('speaker_turns')
           .select('meeting_id, text')
+          .in('meeting_id', scopedIds)
           .ilike('text', pattern)
           .limit(500),
     },
@@ -80,6 +84,7 @@ export async function searchWorkspace({ activeOrgId, query, limit = 12 }) {
         supabase
           .from('mom')
           .select('meeting_id, summary, decisions, open_questions')
+          .in('meeting_id', scopedIds)
           .ilike('summary', pattern)
           .limit(200),
     },
@@ -89,6 +94,7 @@ export async function searchWorkspace({ activeOrgId, query, limit = 12 }) {
         supabase
           .from('mom')
           .select('meeting_id, decisions')
+          .in('meeting_id', scopedIds)
           .ilike('decisions::text', pattern)
           .limit(200),
     },
@@ -98,6 +104,7 @@ export async function searchWorkspace({ activeOrgId, query, limit = 12 }) {
         supabase
           .from('mom')
           .select('meeting_id, action_items')
+          .in('meeting_id', scopedIds)
           .ilike('action_items::text', pattern)
           .limit(200),
     },

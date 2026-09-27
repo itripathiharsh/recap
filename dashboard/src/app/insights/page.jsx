@@ -17,7 +17,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
+import { applyWorkspaceScope, useWorkspace } from '../../lib/workspace';
 import AddMeetingModal from '../../components/AddMeetingModal';
 import TopHeader from '../../components/TopHeader';
 
@@ -41,14 +41,28 @@ export default function InsightsPage() {
         ).order('scheduled_start', { ascending: false });
 
         const meetingIds = new Set((meetData || []).map((m) => m.id));
-        const { data: momData } = await supabase.from('mom').select('*');
-        const { data: turnsData } = await supabase.from('speaker_turns').select('speaker, meeting_id');
+        // mom and speaker_turns have no organisation_id, so restrict them in
+        // the database rather than pulling every organisation's rows into the
+        // browser and discarding them client-side.
+        const scopedIds = Array.from(meetingIds);
+        const [momRes, turnsRes] = await Promise.all([
+          scopedIds.length
+            ? supabase.from('mom').select('*').in('meeting_id', scopedIds)
+            : Promise.resolve({ data: [], error: null }),
+          scopedIds.length
+            ? supabase.from('speaker_turns').select('speaker, meeting_id').in('meeting_id', scopedIds)
+            : Promise.resolve({ data: [], error: null }),
+        ]);
+        if (momRes.error) throw momRes.error;
+        if (turnsRes.error) throw turnsRes.error;
+        const momData = momRes.data;
+        const turnsData = turnsRes.data;
 
         // Only calculate insights from genuine completed meetings
         const genuineMeetings = (meetData || []).filter((m) => m.status === 'completed');
         setMeetings(genuineMeetings);
-        setMoms(filterToMeetings(momData, meetingIds));
-        setSpeakerTurns(filterToMeetings(turnsData, meetingIds));
+        setMoms(momData || []);
+        setSpeakerTurns(turnsData || []);
       } catch (err) {
         console.error('Error loading insights data:', err);
       } finally {

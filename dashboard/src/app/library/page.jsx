@@ -21,7 +21,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
+import { applyWorkspaceScope, useWorkspace } from '../../lib/workspace';
 import { percent, formatBytes, formatDuration, durationMinutes } from '../../lib/format';
 import { countParticipants } from '../../lib/metrics';
 import AddMeetingModal from '../../components/AddMeetingModal';
@@ -60,7 +60,11 @@ export default function LibraryPage() {
 
         const meetingIds = new Set((meetData || []).map((m) => m.id));
 
-        const { data: momData } = await supabase.from('mom').select('*');
+        // mom has no organisation_id: restrict it in the database.
+        const { data: momData, error: momErr } = meetingIds.size
+          ? await supabase.from('mom').select('*').in('meeting_id', Array.from(meetingIds))
+          : { data: [], error: null };
+        if (momErr) throw momErr;
         let transCount = 0;
         if (meetingIds.size > 0) {
           const { count } = await supabase
@@ -70,20 +74,25 @@ export default function LibraryPage() {
           transCount = count || 0;
         }
 
-        const { data: turnsData } = await supabase
-          .from('speaker_turns')
-          .select('meeting_id, speaker');
+    // speaker_turns has no organisation_id, so restrict it to this
+    // workspace's meeting ids in the database rather than downloading every
+    // organisation's speaker rows and discarding them client-side.
+    const scopedIds = Array.from(meetingIds);
+    const { data: turnsData, error: turnsErr } = scopedIds.length
+      ? await supabase.from('speaker_turns').select('meeting_id, speaker').in('meeting_id', scopedIds)
+      : { data: [], error: null };
+    if (turnsErr) throw turnsErr;
 
-        const turnsMap = {};
-        filterToMeetings(turnsData, meetingIds).forEach((t) => {
-          if (!turnsMap[t.meeting_id]) turnsMap[t.meeting_id] = [];
-          if (t.speaker && !turnsMap[t.meeting_id].includes(t.speaker)) {
-            turnsMap[t.meeting_id].push(t.speaker);
-          }
-        });
+    const turnsMap = {};
+    (turnsData || []).forEach((t) => {
+      if (!turnsMap[t.meeting_id]) turnsMap[t.meeting_id] = [];
+      if (t.speaker && !turnsMap[t.meeting_id].includes(t.speaker)) {
+        turnsMap[t.meeting_id].push(t.speaker);
+      }
+    });
 
         setMeetings(meetData || []);
-        setMoms(filterToMeetings(momData, meetingIds));
+        setMoms(momData || []);
         setTranscriptsCount(transCount);
         setSpeakerTurns(turnsMap);
 

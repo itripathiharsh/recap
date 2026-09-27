@@ -155,7 +155,7 @@ export default function MembersAccessPanel({ variant = 'page' }) {
         return;
       }
       try {
-        const [memberRes, inviteRes, meetingRes, turnRes, settingsRes] = await Promise.all([
+        const [memberRes, inviteRes, meetingRes, settingsRes] = await Promise.all([
           supabase
             .from('organisation_members')
             .select('id, user_id, role, status, email, display_name, created_at')
@@ -170,7 +170,6 @@ export default function MembersAccessPanel({ variant = 'page' }) {
             supabase.from('meetings').select('id, title, scheduled_start, started_at'),
             activeOrgId
           ),
-          supabase.from('speaker_turns').select('meeting_id, speaker'),
           supabase
             .from('organisation_settings')
             .select('meeting_data_access, export_downloads, org_settings_access')
@@ -182,6 +181,16 @@ export default function MembersAccessPanel({ variant = 'page' }) {
 
         const scoped = meetingRes.data || [];
         const ids = new Set(scoped.map((m) => m.id));
+
+        // speaker_turns has no organisation_id, so it is requested only after
+        // the scoped meetings and constrained to this workspace's meeting ids.
+        const turnRes = ids.size
+          ? await supabase
+              .from('speaker_turns')
+              .select('meeting_id, speaker')
+              .in('meeting_id', [...ids])
+          : { data: [], error: null };
+
         const byMeeting = {};
         (turnRes.data || []).forEach((t) => {
           if (!ids.has(t.meeting_id)) return;

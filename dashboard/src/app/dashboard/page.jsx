@@ -17,7 +17,7 @@ import {
   Video,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
+import { applyWorkspaceScope, useWorkspace } from '../../lib/workspace';
 import AddMeetingModal from '../../components/AddMeetingModal';
 import TopHeader from '../../components/TopHeader';
 
@@ -58,10 +58,14 @@ export default function DashboardPage() {
 
       const meetingIds = new Set(allMeetings.map((m) => m.id));
 
-      // 2. Fetch MOMs for action items (scoped to those meetings)
-      const { data: momData } = await supabase.from('mom').select('*');
-      const allActions = [];
-      filterToMeetings(momData, meetingIds).forEach((m) => {
+    // 2. MOMs for action items, restricted to this workspace's meeting ids in
+    // the database (mom has no organisation_id).
+    const { data: momData, error: momErr } = meetingIds.size
+      ? await supabase.from('mom').select('*').in('meeting_id', [...meetingIds])
+      : { data: [], error: null };
+    if (momErr) throw momErr;
+    const allActions = [];
+    (momData || []).forEach((m) => {
         if (Array.isArray(m.action_items)) {
           m.action_items.forEach((item, idx) => {
             allActions.push({
@@ -76,15 +80,19 @@ export default function DashboardPage() {
       });
       setActionItems(allActions);
 
-      // 3. Fetch unique speakers from speaker_turns (scoped to those meetings)
-      const { data: turnsData } = await supabase
-        .from('speaker_turns')
-        .select('speaker, meeting_id');
-      const speakersSet = new Set(
-        filterToMeetings(turnsData, meetingIds)
-          .map((t) => t.speaker)
-          .filter(Boolean)
-      );
+    // 3. Unique speakers, restricted to this workspace's meeting ids in the
+    // database. speaker_turns has no organisation_id, so an unfiltered
+    // select would return every organisation's speakers.
+    const scopedIds = Array.from(meetingIds);
+    const { data: turnsData, error: turnsErr } = scopedIds.length
+      ? await supabase.from('speaker_turns').select('speaker, meeting_id').in('meeting_id', scopedIds)
+      : { data: [], error: null };
+    if (turnsErr) throw turnsErr;
+    const speakersSet = new Set(
+      (turnsData || [])
+        .map((t) => t.speaker)
+        .filter(Boolean)
+    );
       setUniqueSpeakers(Array.from(speakersSet));
     } catch (err) {
       console.error('Error fetching dashboard data:', err);

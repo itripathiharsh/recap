@@ -113,13 +113,8 @@ export default function OrganisationOverviewPage() {
       }
 
       try {
-        const [
-          { data: orgData },
-          { data: memberData },
-          { data: meetingData },
-          { data: momData },
-          { data: turnsData },
-        ] = await Promise.all([
+        const [{ data: orgData }, { data: memberData }, { data: meetingData }] =
+          await Promise.all([
           supabase
             .from('organisations')
             .select('id, name, description, created_at, owner_id')
@@ -134,8 +129,6 @@ export default function OrganisationOverviewPage() {
             'scheduled_start',
             { ascending: false }
           ),
-          supabase.from('mom').select('meeting_id, action_items'),
-          supabase.from('speaker_turns').select('meeting_id, speaker'),
         ]);
 
         if (cancelled) return;
@@ -147,6 +140,21 @@ export default function OrganisationOverviewPage() {
         setMeetings(scopedMeetings);
 
         const scopedIds = new Set(scopedMeetings.map((m) => m.id));
+
+        // mom and speaker_turns have no organisation_id, so they are fetched
+        // after the meetings, restricted in the database to this workspace.
+        const [momData, turnsData] = scopedIds.size
+          ? await Promise.all([
+              supabase
+                .from('mom')
+                .select('meeting_id, action_items')
+                .in('meeting_id', [...scopedIds]),
+              supabase
+                .from('speaker_turns')
+                .select('meeting_id, speaker')
+                .in('meeting_id', [...scopedIds]),
+            ])
+          : [[], []];
         setMoms(filterToMeetings(momData || [], scopedIds));
 
         const turnsMap = {};

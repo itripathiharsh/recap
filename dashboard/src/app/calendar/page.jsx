@@ -213,21 +213,25 @@ export default function CalendarPage() {
   // Fetch real data from Supabase (scoped to the active workspace)
   const fetchData = useCallback(async () => {
     try {
-      const [meetingsRes, momsRes, turnsRes] = await Promise.all([
-        applyWorkspaceScope(
-          supabase.from('meetings').select('*'),
-          activeOrgId
-        ).order('scheduled_start', { ascending: true }),
-        supabase
-          .from('mom')
-          .select('meeting_id, summary'),
-        supabase
-          .from('speaker_turns')
-          .select('meeting_id, speaker'),
-      ]);
+      const meetingsRes = await applyWorkspaceScope(
+        supabase.from('meetings').select('*'),
+        activeOrgId
+      ).order('scheduled_start', { ascending: true });
 
       const meetingIds = new Set((meetingsRes.data || []).map((m) => m.id));
       setMeetings(meetingsRes.data || []);
+
+      // mom and speaker_turns have no organisation_id, so they are requested
+      // second, restricted in the database to the meetings just resolved.
+      const scopedIds = Array.from(meetingIds);
+      const [momsRes, turnsRes] = await Promise.all([
+        scopedIds.length
+          ? supabase.from('mom').select('meeting_id, summary').in('meeting_id', scopedIds)
+          : Promise.resolve({ data: [] }),
+        scopedIds.length
+          ? supabase.from('speaker_turns').select('meeting_id, speaker').in('meeting_id', scopedIds)
+          : Promise.resolve({ data: [] }),
+      ]);
 
       // Index MOMs by meeting_id (scoped to those meetings)
       const momMap = {};

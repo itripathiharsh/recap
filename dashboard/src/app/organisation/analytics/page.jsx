@@ -115,34 +115,43 @@ export default function OrganisationAnalyticsPage() {
         return;
       }
       try {
-        const [
-          { data: meetingData },
-          { data: memberData },
-          { data: momData },
-          { data: turnData },
-        ] = await Promise.all([
+        const [{ data: meetingData }, { data: memberData }] = await Promise.all([
           applyWorkspaceScope(supabase.from('meetings').select('*'), activeOrgId),
           supabase
             .from('organisation_members')
             .select('id, user_id, role, status, email, display_name')
             .eq('organisation_id', activeOrgId),
-          supabase.from('mom').select('meeting_id, action_items'),
-          supabase.from('speaker_turns').select('meeting_id, speaker'),
         ]);
 
         if (cancelled) return;
 
         const scoped = meetingData || [];
         const ids = new Set(scoped.map((m) => m.id));
+
+        // mom and speaker_turns have no organisation_id, so they are requested
+        // only after the meetings and are restricted in the database.
+        const [momData, turnData] = ids.size
+          ? await Promise.all([
+              supabase
+                .from('mom')
+                .select('meeting_id, action_items')
+                .in('meeting_id', [...ids]),
+              supabase
+                .from('speaker_turns')
+                .select('meeting_id, speaker')
+                .in('meeting_id', [...ids]),
+            ])
+          : [[], []];
+
         const byMeeting = {};
-        filterToMeetings(turnData || [], ids).forEach((t) => {
+        (turnData || []).forEach((t) => {
           if (!byMeeting[t.meeting_id]) byMeeting[t.meeting_id] = new Set();
           if (t.speaker && t.speaker.trim()) byMeeting[t.meeting_id].add(t.speaker.trim());
         });
 
         setMeetings(scoped);
         setMembers(memberData || []);
-        setMoms(filterToMeetings(momData || [], ids));
+        setMoms(momData || []);
         setSpeakerTurns(byMeeting);
       } catch (err) {
         console.error('Organisation analytics load error:', err);

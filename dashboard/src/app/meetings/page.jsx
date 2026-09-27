@@ -28,7 +28,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
+import { applyWorkspaceScope, useWorkspace } from '../../lib/workspace';
 import AddMeetingModal from '../../components/AddMeetingModal';
 import TopHeader from '../../components/TopHeader';
 import ProcessingProgress from '../../components/ProcessingProgress';
@@ -81,22 +81,32 @@ export default function MeetingsPage() {
         setSelectedMeetingId(allMeetings[0]?.id || null);
       }
 
-      // 2. Fetch MOMs (scoped to those meetings)
-      const { data: momData } = await supabase.from('mom').select('*');
+      // 2. Fetch MOMs. Restricted to the meeting ids already resolved above:
+      // mom has no organisation_id, so an unfiltered select downloads every
+      // organisation's minutes of meetings into the browser before the
+      // client-side filter discards them.
+      const { data: momData, error: momErr } = meetingIds.size
+        ? await supabase.from('mom').select('*').in('meeting_id', [...meetingIds])
+        : { data: [], error: null };
+      if (momErr) throw momErr;
       const momsMap = {};
-      filterToMeetings(momData, meetingIds).forEach((m) => {
+      (momData || []).forEach((m) => {
         momsMap[m.meeting_id] = m;
       });
       setMoms(momsMap);
 
-      // 3. Fetch Speaker Turns (scoped to those meetings)
-      const { data: turnsData } = await supabase
-        .from('speaker_turns')
-        .select('*')
-        .order('start_time', { ascending: true });
+      // 3. Fetch Speaker Turns, likewise restricted in the database.
+      const { data: turnsData, error: turnsErr } = meetingIds.size
+        ? await supabase
+            .from('speaker_turns')
+            .select('*')
+            .in('meeting_id', [...meetingIds])
+            .order('start_time', { ascending: true })
+        : { data: [], error: null };
+      if (turnsErr) throw turnsErr;
 
       const turnsMap = {};
-      filterToMeetings(turnsData, meetingIds).forEach((t) => {
+      (turnsData || []).forEach((t) => {
         if (!turnsMap[t.meeting_id]) {
           turnsMap[t.meeting_id] = [];
         }
