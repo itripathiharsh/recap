@@ -12,6 +12,8 @@ import {
   Lightbulb,
   Settings,
   LogOut,
+  Menu,
+  X,
   LayoutGrid,
   Users,
   BarChart3,
@@ -24,6 +26,9 @@ export default function Navigation({ session }) {
   const pathname = usePathname();
   const router = useRouter();
   const { activeOrgId, isOrganisation } = useWorkspace();
+  // Below 900px the sidebar is an off-canvas drawer (see globals.css), so it
+  // needs an open state and a way to dismiss it.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [meetingCount, setMeetingCount] = useState(null);
   const [userProfile, setUserProfile] = useState({
     name: session?.user?.user_metadata?.name || session?.user?.email?.split('@')[0] || 'Account',
@@ -61,6 +66,10 @@ export default function Navigation({ session }) {
       (u.email ? u.email.split('@')[0] : 'Account');
     setUserProfile({ name, email: u.email || '' });
   }, [session]);
+
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [pathname]);
 
   const handleSignOut = async () => {
     try {
@@ -112,7 +121,26 @@ export default function Navigation({ session }) {
   };
 
   return (
-    <aside className="sidebar-ref">
+    <>
+      {/* Mobile drawer trigger + scrim. Hidden at desktop widths by CSS. */}
+      <button
+        type="button"
+        className="sidebar-drawer-toggle"
+        onClick={() => setSidebarOpen((v) => !v)}
+        aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+        aria-expanded={sidebarOpen}
+      >
+        {sidebarOpen ? <X size={18} /> : <Menu size={18} />}
+      </button>
+      {sidebarOpen && (
+        <div
+          className="sidebar-scrim"
+          role="presentation"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      <aside className={`sidebar-ref${sidebarOpen ? ' sidebar-open' : ''}`}>
       {/* Brand Header */}
       <div className="sidebar-brand">
         <Link href="/" className="sidebar-brand-link" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -161,7 +189,8 @@ export default function Navigation({ session }) {
           </button>
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 

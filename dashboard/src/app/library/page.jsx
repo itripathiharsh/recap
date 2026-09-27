@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
-import { percent, formatBytes } from '../../lib/format';
+import { percent, formatBytes, formatDuration, durationMinutes } from '../../lib/format';
 import { countParticipants } from '../../lib/metrics';
 import AddMeetingModal from '../../components/AddMeetingModal';
 import TopHeader from '../../components/TopHeader';
@@ -494,7 +494,7 @@ export default function LibraryPage() {
                             {m.title}
                           </div>
                           <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px' }} className="tabular-nums">
-                            {dateStr} • {timeStr} • {m.expected_duration_minutes || 30} min
+                            {dateStr} | {timeStr} | {formatDuration(durationMinutes(m)) || 'Duration not recorded'}
                           </div>
                         </Link>
                       </td>

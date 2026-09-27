@@ -348,18 +348,24 @@ export default function MeetingDetailPage() {
   }, [meeting]);
 
   // Derived real metrics
-  const participantsCount = speakerStats.length > 0 ? speakerStats.length : meeting?.status === 'completed' ? 1 : 0;
+  // A completed meeting with zero speaker turns has zero identified
+  // participants, not one. The old `? 1 : 0` reported a participant for a
+  // meeting where nobody was ever identified.
+  const participantsCount = speakerStats.length;
   const totalSpeakerTurnsCount = speakerTurns.length;
   const actionItemsCount = Array.isArray(mom?.action_items) ? mom.action_items.length : 0;
   const decisionsCount = Array.isArray(mom?.decisions) ? mom.decisions.length : 0;
   const openQuestionsCount = Array.isArray(mom?.open_questions) ? mom.open_questions.length : 0;
 
-  // Average speaking percentage across participants
+  // Average speaking share, derived from measured durations. Returns null when
+  // no turn carries a usable duration, because `100 / speakerCount` assumes a
+  // perfectly even conversation and is not a measurement.
   const avgSpeakingPercentage = useMemo(() => {
-    if (speakerStats.length === 0) return 0;
-    // Average speaking percentage across participants
-    return Math.round(100 / speakerStats.length);
-  }, [speakerStats]);
+    if (!hasSpeakingDurations) return null;
+    const withPct = speakerStats.filter((s) => s.percentage != null);
+    if (withPct.length === 0) return null;
+    return Math.round(withPct.reduce((sum, s) => sum + s.percentage, 0) / withPct.length);
+  }, [speakerStats, hasSpeakingDurations]);
 
   // Discussion Focus (Derived truthfully from meeting title or summary)
   const discussionFocus = useMemo(() => {
@@ -919,7 +925,7 @@ export default function MeetingDetailPage() {
                 </div>
                 <div>
                   <div className="md-metric-value tabular-nums">
-                    {speakerStats.length > 0 ? `${avgSpeakingPercentage}%` : '0%'}
+                    {avgSpeakingPercentage == null ? '—' : `${avgSpeakingPercentage}%`}
                   </div>
                   <div className="md-metric-label">
                     Avg. speaking time

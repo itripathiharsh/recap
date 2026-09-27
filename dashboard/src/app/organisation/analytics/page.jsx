@@ -62,11 +62,12 @@ function startOfDay(date) {
 }
 
 function meetingMinutes(m) {
+  // Measured only. expected_duration_minutes is a plan, not a recording.
   if (m.started_at && m.ended_at) {
     const diff = (new Date(m.ended_at) - new Date(m.started_at)) / 60000;
     if (diff > 0) return diff;
   }
-  return Number(m.expected_duration_minutes) || 0;
+  return 0;
 }
 
 function meetingStamp(m) {
@@ -304,7 +305,13 @@ export default function OrganisationAnalyticsPage() {
     const counts = new Map();
     Object.values(speakerTurns).forEach((set) => {
       if (!set) return;
-      set.forEach((s) => counts.set(s, (counts.get(s) || 0) + 1));
+      // Placeholder labels are not employees. Ranking UNKNOWN and SPEAKER_02
+      // in "Most Active Members" directly contradicted the Speakers Identified
+      // card immediately above it.
+      set.forEach((s) => {
+        if (isPlaceholderSpeaker(s)) return;
+        counts.set(s, (counts.get(s) || 0) + 1);
+      });
     });
 
     const byEmail = new Map(members.map((m) => [(m.email || '').toLowerCase(), m]));

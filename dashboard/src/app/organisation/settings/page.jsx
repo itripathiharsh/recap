@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { useWorkspace } from '../../../lib/workspace';
+import { classifyError, toMessage } from '../../../lib/supabaseError';
 import OrganisationPage from '../../../components/OrganisationPage';
 import TopHeader from '../../../components/TopHeader';
 import MembersAccessPanel from '../../../components/MembersAccessPanel';
@@ -227,11 +228,12 @@ export default function OrganisationSettingsPage() {
       setOrg((o) => ({ ...o, ...draft }));
       setStatus({ kind: 'ok', text: 'Organisation profile saved.' });
     } catch (err) {
+      // Never surface a raw PostgREST body, and never name a migration file at a
+      // customer. classifyError maps the code to readable copy; the fallback
+      // applies when the error has no message at all (e.g. an empty 502 body).
       setStatus({
         kind: 'error',
-        text:
-          err.message ||
-          'Could not save. If this mentions a missing column, apply supabase/migrations/20260926120000_organisation_settings.sql.',
+        text: toMessage(classifyError(err), "We couldn't save your profile. Please try again."),
       });
     } finally {
       setSavingProfile(false);

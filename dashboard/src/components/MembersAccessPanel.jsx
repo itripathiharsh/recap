@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { applyWorkspaceScope, useWorkspace } from '../lib/workspace';
+import { unwrap, classifyError, toMessage } from '../lib/supabaseError';
 import { getPersonTeam, teamColor, UNASSIGNED_TEAM } from '../lib/teams.mjs';
 
 const AVATAR_PALETTES = [
@@ -123,6 +124,7 @@ export default function MembersAccessPanel({ variant = 'page' }) {
   const [checked, setChecked] = useState(() => new Set());
   const [rowMenuOpen, setRowMenuOpen] = useState(null);
   const [actionError, setActionError] = useState('');
+  const [status, setStatus] = useState(null);
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -392,18 +394,33 @@ export default function MembersAccessPanel({ variant = 'page' }) {
     }
   };
 
+  /**
+   * Every mutation below follows the same contract: call the RPC, surface a
+   * classified error, then REFETCH so the screen matches the database.
+   *
+   * Previously these handlers issued the RPC and returned. The row stayed on
+   * screen showing the old role/member until a manual page reload, which read
+   * as "the action did nothing" even though it had been committed. They also
+   * showed `err.message` verbatim, leaking raw PostgREST text such as
+   * "Could not find the function public.update_member_role in the schema cache".
+   */
   const handleChangeRole = async (person, newRole) => {
     setRowMenuOpen(null);
     setActionError('');
+    setStatus(null);
     try {
-      const { error } = await supabase.rpc('update_member_role', {
-        p_organisation_id: activeOrgId,
-        p_target_user_id: person.userId,
-        p_role: newRole,
-      });
-      if (error) throw error;
+      unwrap(
+        await supabase.rpc('update_member_role', {
+          p_organisation_id: activeOrgId,
+          p_target_user_id: person.userId,
+          p_role: newRole,
+        }),
+        'change member role'
+      );
+      setStatus({ kind: 'ok', text: `${person.name} is now ${newRole}.` });
+      await load();
     } catch (err) {
-      setActionError(err.message || 'Could not change role.');
+      setActionError(toMessage(classifyError(err), 'We could not change that role.'));
     }
   };
 
@@ -413,25 +430,32 @@ export default function MembersAccessPanel({ variant = 'page' }) {
       return;
     }
     setActionError('');
+    setStatus(null);
     try {
-      const { error } = await supabase.rpc('remove_member', {
-        p_organisation_id: activeOrgId,
-        p_target_user_id: person.userId,
-      });
-      if (error) throw error;
+      unwrap(
+        await supabase.rpc('remove_member', {
+          p_organisation_id: activeOrgId,
+          p_target_user_id: person.userId,
+        }),
+        'remove member'
+      );
+      setStatus({ kind: 'ok', text: `${person.name} was removed.` });
+      await load();
     } catch (err) {
-      setActionError(err.message || 'Could not remove member.');
+      setActionError(toMessage(classifyError(err), 'We could not remove that member.'));
     }
   };
 
   const handleRevoke = async (person) => {
     setRowMenuOpen(null);
     setActionError('');
+    setStatus(null);
     try {
-      const { error } = await supabase.rpc('revoke_invitation', { p_invitation_id: person.key });
-      if (error) throw error;
+      unwrap(await supabase.rpc('revoke_invitation', { p_invitation_id: person.key }), 'revoke invitation');
+      setStatus({ kind: 'ok', text: `Invitation for ${person.name} was revoked.` });
+      await load();
     } catch (err) {
-      setActionError(err.message || 'Could not revoke invitation.');
+      setActionError(toMessage(classifyError(err), 'We could not revoke that invitation.'));
     }
   };
 
@@ -986,6 +1010,16 @@ export default function MembersAccessPanel({ variant = 'page' }) {
           <AlertCircle size={14} aria-hidden="true" />
           <span>{actionError}</span>
           <button type="button" onClick={() => setActionError('')} aria-label="Dismiss">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {status && !actionError && (
+        <div className="org-mb-alert ok" role="status">
+          <Check size={14} aria-hidden="true" />
+          <span>{status.text}</span>
+          <button type="button" onClick={() => setStatus(null)} aria-label="Dismiss">
             <X size={14} />
           </button>
         </div>

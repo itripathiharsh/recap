@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { applyWorkspaceScope, useWorkspace } from '../lib/workspace';
+import { unwrap, classifyError, toMessage } from '../lib/supabaseError';
 import { getTeam, TEAM_COLORS } from '../lib/teams.mjs';
 
 const AVATAR_PALETTES = [
@@ -331,27 +332,33 @@ export default function TeamsPanel() {
 
   /* ---------------------------------------------------------------- create */
 
+  // Both mutations REFETCH after success. Previously the insert/delete
+  // succeeded on the server and the list kept rendering the old rows until a
+  // manual reload, so the UI looked like the action had done nothing.
   const createTeam = async (e) => {
     e.preventDefault();
     if (!newName.trim()) return;
     setBusy(true);
     setStatus(null);
     try {
-      const { error } = await supabase.from('teams').insert({
-        organisation_id: activeOrgId,
-        name: newName.trim(),
-        description: newDescription.trim() || null,
-        color: TILE_COLORS[rows.length % TILE_COLORS.length],
-      });
-      if (error) throw error;
+      unwrap(
+        await supabase.from('teams').insert({
+          organisation_id: activeOrgId,
+          name: newName.trim(),
+          description: newDescription.trim() || null,
+          color: TILE_COLORS[rows.length % TILE_COLORS.length],
+        }),
+        'create team'
+      );
       setCreateOpen(false);
       setNewName('');
       setNewDescription('');
       setStatus({ kind: 'ok', text: 'Team created.' });
+      await load();
     } catch (err) {
       setStatus({
         kind: 'error',
-        text: "We couldn't create the team. Please try again.",
+        text: toMessage(classifyError(err), "We couldn't create the team. Please try again."),
       });
     } finally {
       setBusy(false);
@@ -363,11 +370,14 @@ export default function TeamsPanel() {
     if (!window.confirm(`Delete the ${row.name} team? Meetings are not deleted.`)) return;
     setStatus(null);
     try {
-      const { error } = await supabase.from('teams').delete().eq('id', row.key);
-      if (error) throw error;
+      unwrap(await supabase.from('teams').delete().eq('id', row.key), 'delete team');
       setStatus({ kind: 'ok', text: `Deleted ${row.name}.` });
+      await load();
     } catch (err) {
-      setStatus({ kind: 'error', text: err.message || 'Could not delete the team.' });
+      setStatus({
+        kind: 'error',
+        text: toMessage(classifyError(err), "We couldn't delete that team. Please try again."),
+      });
     }
   };
 

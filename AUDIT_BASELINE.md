@@ -47,14 +47,22 @@ the data exposure in §5; the cause is missing RLS.
 
 | Item | Value |
 |---|---|
-| Project ref | `opiipezwttttnallhegz` |
+| Project ref | `pukfwaxuhmeyirkddcga` (read from `SUPABASE_URL` in `.env` — the project every probe in this document actually hit) |
 | Kind | **Supabase hosted** (PostgREST + GoTrue + Storage reachable) |
 | `auth /health` | HTTP 200 |
 | `service_role` accepted by PostgREST | HTTP 200 |
 | anon key accepted at schema root | HTTP 401 (root listing is privileged) |
 | Auth users | 6 |
 | Organisations | 1 — `Sentio Mind`, created 2026-08-18 |
-| Demo vs production | **Assessment: DEVELOPMENT / DEMO.** 6 users, 1 org, 0 invitations, 0 `system_events`. `system_events` being empty means the worker pipeline has never written to this project. **Requires owner confirmation before treating as production.** |
+| Demo vs production | **Assessment: DEVELOPMENT / DEMO.** 6 users, 1 org, 0 invitations, `system_events` populated only by heartbeats. **Requires owner confirmation before treating as production.** |
+
+### Project-reference divergence (latent retargeting bug)
+
+`dashboard/.env.local` and the root `.env` both point at `pukfwaxuhmeyirkddcga` — correct
+and consistent. However `dashboard/src/lib/supabase.js` hardcodes a **different** project
+(`opiipezwttttnallhegz`) as a fallback when the env var is absent. If `NEXT_PUBLIC_SUPABASE_URL`
+is ever missing, the frontend silently retargets a different database than the backend
+worker writes to. The fallback must be removed so the app fails loudly instead.
 
 ### SQL execution capability — **BLOCKER**
 

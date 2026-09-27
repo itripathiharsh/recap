@@ -417,7 +417,7 @@ export default function TopHeader({
                   whiteSpace: 'nowrap',
                 }}
               >
-                {userProfile.name || 'Harsh Vardhan'}
+                {userProfile.name || 'Account'}
               </span>
               <ChevronDown size={14} color="#64748B" />
             </button>

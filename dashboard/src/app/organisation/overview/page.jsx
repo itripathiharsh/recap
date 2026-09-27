@@ -171,14 +171,19 @@ export default function OrganisationOverviewPage() {
   const metrics = useMemo(() => {
     const activeMembers = members.filter((m) => m.status === 'active').length;
 
+    // Measured only. expected_duration_minutes is a plan, not a recording, and
+    // including it here is what made this card disagree with /meetings.
     let totalMinutes = 0;
+    let untimedCompleted = 0;
     meetings.forEach((m) => {
       if (m.started_at && m.ended_at) {
         const diff = Math.round((new Date(m.ended_at) - new Date(m.started_at)) / 60000);
-        totalMinutes += diff > 0 ? diff : m.expected_duration_minutes || 0;
-      } else if (m.status === 'completed') {
-        totalMinutes += m.expected_duration_minutes || 0;
+        if (diff > 0) {
+          totalMinutes += diff;
+          return;
+        }
       }
+      if (m.status === 'completed') untimedCompleted += 1;
     });
 
     const actionItems = moms.reduce(
@@ -290,7 +295,7 @@ export default function OrganisationOverviewPage() {
       bucket.meetings += 1;
       if (m.started_at && m.ended_at) {
         const diff = (new Date(m.ended_at) - new Date(m.started_at)) / 3600000;
-        bucket.hours += diff > 0 ? diff : (m.expected_duration_minutes || 0) / 60;
+        if (diff > 0) bucket.hours += diff;
       }
     });
 
@@ -827,7 +832,11 @@ function circleProps(chart, value, index) {
 }
 
 function MetricCard({ icon, label, value, delta, tone, sub }) {
-  const sign = delta >= 0 ? '+' : '';
+  // `pct()` returns null when the previous period was zero, because a change
+  // from a zero baseline is not a growth rate. `null >= 0` is true in JS, so the
+  // old code rendered a bare "+%" chip instead of hiding it.
+  const hasDelta = typeof delta === 'number' && Number.isFinite(delta);
+  const sign = hasDelta && delta >= 0 ? '+' : '';
   return (
     <div className="org-ov-metric">
       <div className="org-ov-metric-icon">{icon}</div>
@@ -835,11 +844,15 @@ function MetricCard({ icon, label, value, delta, tone, sub }) {
         <div className="org-ov-metric-label">{label}</div>
         <div className="org-ov-metric-value-row">
           <span className="org-ov-metric-value tabular-nums">{value}</span>
-          <span className={`org-ov-metric-delta ${tone}`}>
-            <TrendingUp size={12} strokeWidth={2.4} aria-hidden="true" />
-            {sign}
-            {delta}%
-          </span>
+          {hasDelta ? (
+            <span className={`org-ov-metric-delta ${tone}`}>
+              <TrendingUp size={12} strokeWidth={2.4} aria-hidden="true" />
+              {sign}
+              {delta}%
+            </span>
+          ) : (
+            <span className="org-ov-metric-sub">new this period</span>
+          )}
         </div>
         <div className="org-ov-metric-sub">{sub}</div>
       </div>
