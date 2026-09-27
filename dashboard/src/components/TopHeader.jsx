@@ -22,6 +22,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { applyWorkspaceScope, useWorkspace } from '../lib/workspace';
 import AddMeetingModal from './AddMeetingModal';
+import WorkspaceSearch from './WorkspaceSearch';
 
 function getInitials(name) {
   if (!name) return 'HV';
@@ -155,18 +156,12 @@ export default function TopHeader({
   return (
     <>
       <header className="dashboard-topbar">
-        {/* Search Input */}
-        <div className="dashboard-search-wrap">
-          <Search size={16} color="#94A3B8" aria-hidden="true" />
-          <input
-            type="text"
-            className="dashboard-search-input"
-            placeholder={placeholder}
-            {...(onSearchChange
-              ? { value: searchQuery, onChange: (e) => onSearchChange(e.target.value) }
-              : { defaultValue: searchQuery })}
-          />
-        </div>
+        {/* Search Input — a real, workspace-scoped database search */}
+        <WorkspaceSearch
+          value={searchQuery}
+          onSearchChange={onSearchChange}
+          placeholder={placeholder}
+        />
 
         {/* Right Actions */}
         <div className="dashboard-topbar-actions">
