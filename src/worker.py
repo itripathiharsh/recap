@@ -31,6 +31,7 @@ from src.supabase_client import (
     db_claim_meeting,
     db_create_job,
     db_record_system_event,
+    db_record_pipeline_stage,
     db_save_mom,
     db_save_speaker_turns,
     db_save_transcript,
@@ -98,6 +99,7 @@ def execute_meeting_pipeline(
     )
     if job_id:
         db_update_job(job_id=job_id, status="recording")
+    db_record_pipeline_stage(meeting_id, "audio_capture", "started")
 
     try:
         audio_path = join_and_record(
@@ -109,12 +111,14 @@ def execute_meeting_pipeline(
         )
         logger.info("Audio recorded successfully at: %s", audio_path)
         db_upload_recording_audio(meeting_id=meeting_id, audio_path=audio_path)
+        db_record_pipeline_stage(meeting_id, "audio_capture", "completed")
     except Exception as exc:
         err_msg = f"Join/Recording failed: {exc}"
         logger.error(err_msg, exc_info=True)
         db_update_meeting_status(meeting_id=meeting_id, status="failed", error_message=err_msg)
         if job_id:
             db_update_job(job_id=job_id, status="failed", error=err_msg)
+        db_record_pipeline_stage(meeting_id, "audio_capture", "failed", detail=err_msg)
         db_record_system_event("error", "recording_failed", err_msg, meeting_id=meeting_id)
         return False
 
@@ -122,6 +126,7 @@ def execute_meeting_pipeline(
     db_update_meeting_status(meeting_id=meeting_id, status="processing")
     if job_id:
         db_update_job(job_id=job_id, status="transcribing")
+    db_record_pipeline_stage(meeting_id, "transcription", "started")
 
     try:
         stt_result = transcribe(
@@ -136,6 +141,7 @@ def execute_meeting_pipeline(
             language=stt_result.get("language", "en"),
         )
         logger.info("STT completed and saved to Supabase.")
+        db_record_pipeline_stage(meeting_id, "transcription", "completed")
 
         # Substance Gatekeeper Check:
         # Before running expensive diarization and LLM MOM, verify that this is a genuine meeting.
@@ -176,12 +182,14 @@ def execute_meeting_pipeline(
         db_update_meeting_status(meeting_id=meeting_id, status="failed", error_message=err_msg)
         if job_id:
             db_update_job(job_id=job_id, status="failed", error=err_msg)
+        db_record_pipeline_stage(meeting_id, "transcription", "failed", detail=err_msg)
         db_record_system_event("error", "stt_failed", err_msg, meeting_id=meeting_id)
         return False
 
     # 4. Stage 3: Diarization (pyannote.audio)
     if job_id:
         db_update_job(job_id=job_id, status="diarizing")
+    db_record_pipeline_stage(meeting_id, "voice_diarization", "started")
 
     try:
         diarize_result = diarize(
@@ -194,14 +202,19 @@ def execute_meeting_pipeline(
             speaker_turns=diarize_result.get("speaker_turns", []),
         )
         logger.info("Diarization completed and saved to Supabase.")
+        db_record_pipeline_stage(meeting_id, "voice_diarization", "completed")
     except Exception as exc:
         err_msg = f"Diarization failed: {exc}"
         logger.warning("%s. Continuing with fallback speaker.", err_msg)
+        db_record_pipeline_stage(
+            meeting_id, "voice_diarization", "failed", detail="continuing with fallback speaker"
+        )
         db_record_system_event("warning", "diarization_failed", err_msg, meeting_id=meeting_id)
 
     # 5. Stage 4: Merge Transcript + Speakers
     if job_id:
         db_update_job(job_id=job_id, status="merging")
+    db_record_pipeline_stage(meeting_id, "speaker_identification", "started")
 
     try:
         merge_result = merge_transcript_and_speakers(
@@ -214,18 +227,21 @@ def execute_meeting_pipeline(
             meeting_id=meeting_id,
             speaker_turns=merge_result.get("turns", []),
         )
+        db_record_pipeline_stage(meeting_id, "speaker_identification", "completed")
     except Exception as exc:
         err_msg = f"Merge failed: {exc}"
         logger.error(err_msg, exc_info=True)
         db_update_meeting_status(meeting_id=meeting_id, status="failed", error_message=err_msg)
         if job_id:
             db_update_job(job_id=job_id, status="failed", error=err_msg)
+        db_record_pipeline_stage(meeting_id, "speaker_identification", "failed", detail=err_msg)
         db_record_system_event("error", "merge_failed", err_msg, meeting_id=meeting_id)
         return False
 
     # 6. Stage 5: MOM Generation
     if job_id:
         db_update_job(job_id=job_id, status="generating_mom")
+    db_record_pipeline_stage(meeting_id, "executive_mom", "started")
 
     try:
         mom_result = generate_mom(
@@ -241,18 +257,21 @@ def execute_meeting_pipeline(
             mom_markdown=mom_markdown,
         )
         logger.info("MOM generated and saved to Supabase.")
+        db_record_pipeline_stage(meeting_id, "executive_mom", "completed")
     except Exception as exc:
         err_msg = f"MOM generation failed: {exc}"
         logger.error(err_msg, exc_info=True)
         db_update_meeting_status(meeting_id=meeting_id, status="failed", error_message=err_msg)
         if job_id:
             db_update_job(job_id=job_id, status="failed", error=err_msg)
+        db_record_pipeline_stage(meeting_id, "executive_mom", "failed", detail=err_msg)
         db_record_system_event("error", "mom_failed", err_msg, meeting_id=meeting_id)
         return False
 
     # 7. Stage 6: Delivery
     if job_id:
         db_update_job(job_id=job_id, status="delivering")
+    db_record_pipeline_stage(meeting_id, "delivery", "started")
 
     try:
         deliver(
@@ -260,8 +279,10 @@ def execute_meeting_pipeline(
             recordings_dir=recordings_dir,
             jobs_dir=jobs_dir,
         )
+        db_record_pipeline_stage(meeting_id, "delivery", "completed")
     except Exception as exc:
         logger.warning("Delivery warning: %s", exc)
+        db_record_pipeline_stage(meeting_id, "delivery", "failed", detail=str(exc))
 
     # 8. Mark Completed
     ended_at = datetime.now(timezone.utc).isoformat()

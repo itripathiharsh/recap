@@ -162,8 +162,9 @@ export default function TopHeader({
             type="text"
             className="dashboard-search-input"
             placeholder={placeholder}
-            value={searchQuery}
-            onChange={onSearchChange ? (e) => onSearchChange(e.target.value) : undefined}
+            {...(onSearchChange
+              ? { value: searchQuery, onChange: (e) => onSearchChange(e.target.value) }
+              : { defaultValue: searchQuery })}
           />
         </div>
 

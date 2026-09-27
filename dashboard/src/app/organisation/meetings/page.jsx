@@ -1,43 +1,40 @@
 'use client';
 
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
-  Video,
+  Calendar,
   Users,
   Clock,
   FileText,
-  Plus,
+  Video,
   ChevronDown,
   MoreHorizontal,
-  ExternalLink,
-  Search,
-  Calendar,
-  Shield,
+  Heart,
+  ListChecks,
   User,
-  X,
-  Play,
-  Share2,
-  Download,
+  ArrowUpDown,
+  Filter,
+  ClipboardList,
   Check,
   TrendingUp,
-  Building2,
-  Trash2,
+  ArrowRight,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../../lib/workspace';
+import { getTeam, getPlatform, teamColor, PLATFORM_LABEL } from '../../../lib/teams.mjs';
 import OrganisationPage from '../../../components/OrganisationPage';
 import TopHeader from '../../../components/TopHeader';
-import AddMeetingModal from '../../../components/AddMeetingModal';
+
+const FAVOURITES_KEY = 'recap.orgMeetingFavourites';
 
 const AVATAR_PALETTES = [
-  { bg: '#DBEAFE', text: '#1E40AF' }, // blue
-  { bg: '#EDE9FE', text: '#6D28D9' }, // purple
-  { bg: '#E0F2FE', text: '#0369A1' }, // sky
-  { bg: '#FEF3C7', text: '#B45309' }, // amber
-  { bg: '#D1FAE5', text: '#047857' }, // emerald
-  { bg: '#FCE7F3', text: '#BE185D' }, // pink
+  { bg: '#DBEAFE', text: '#1E40AF' },
+  { bg: '#EDE9FE', text: '#6D28D9' },
+  { bg: '#E0F2FE', text: '#0369A1' },
+  { bg: '#FEF3C7', text: '#B45309' },
+  { bg: '#D1FAE5', text: '#047857' },
+  { bg: '#FCE7F3', text: '#BE185D' },
 ];
 
 function getInitials(name, email) {
@@ -46,9 +43,7 @@ function getInitials(name, email) {
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }
-  if (email) {
-    return email.slice(0, 2).toUpperCase();
-  }
+  if (email) return email.slice(0, 2).toUpperCase();
   return 'U';
 }
 
@@ -58,32 +53,53 @@ function getAvatarColors(key) {
   for (let i = 0; i < key.length; i++) {
     hash = key.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const index = Math.abs(hash) % AVATAR_PALETTES.length;
-  return AVATAR_PALETTES[index];
+  return AVATAR_PALETTES[Math.abs(hash) % AVATAR_PALETTES.length];
 }
 
-function formatMeetingDate(dateStr) {
+const STATUS_LABEL = {
+  completed: 'Processed',
+  processed: 'Processed',
+  processing: 'Processing',
+  scheduled: 'Scheduled',
+  recording: 'Recording',
+  joining: 'Joining',
+  failed: 'Failed',
+  error: 'Failed',
+};
+
+function statusMeta(meeting) {
+  const raw = (meeting.status || 'scheduled').toLowerCase();
+  return { key: STATUS_LABEL[raw] ? raw : 'scheduled', label: STATUS_LABEL[raw] || 'Scheduled' };
+}
+
+function formatDuration(minutes) {
+  const mins = Math.max(0, Math.round(Number(minutes) || 0));
+  if (mins === 0) return '—';
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function meetingMinutes(meeting) {
+  if (meeting.started_at && meeting.ended_at) {
+    const diff = Math.round((new Date(meeting.ended_at) - new Date(meeting.started_at)) / 60000);
+    if (diff > 0) return diff;
+  }
+  return Number(meeting.expected_duration_minutes) || 0;
+}
+
+function formatDayLabel(dateStr) {
   if (!dateStr) return '—';
   const d = new Date(dateStr);
   const now = new Date();
-
-  const isToday =
-    d.getDate() === now.getDate() &&
-    d.getMonth() === now.getMonth() &&
-    d.getFullYear() === now.getFullYear();
-
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
-  const isYesterday =
-    d.getDate() === yesterday.getDate() &&
-    d.getMonth() === yesterday.getMonth() &&
-    d.getFullYear() === yesterday.getFullYear();
+  const same = (a, b) =>
+    a.getDate() === b.getDate() && a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
 
-  const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
-
-  if (isToday) return `Today, ${timeStr}`;
-  if (isYesterday) return `Yesterday, ${timeStr}`;
-
+  if (same(d, now)) return 'Today';
+  if (same(d, yesterday)) return 'Yesterday';
   return d.toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'short',
@@ -91,310 +107,280 @@ function formatMeetingDate(dateStr) {
   });
 }
 
-function formatDuration(minutes) {
-  const mins = Math.max(0, Math.round(Number(minutes) || 0));
-  if (mins === 0) return '0m';
-  if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+function meetingStamp(m) {
+  return new Date(m.started_at || m.scheduled_start || m.created_at || 0).getTime() || 0;
 }
 
 export default function OrganisationMeetingsPage() {
-  const router = useRouter();
-  const { activeOrgId, activeWorkspace, session } = useWorkspace();
+  const { activeOrgId, session } = useWorkspace();
 
   const [meetings, setMeetings] = useState([]);
   const [members, setMembers] = useState([]);
   const [moms, setMoms] = useState([]);
   const [speakerTurns, setSpeakerTurns] = useState({});
-  const [loading, setLoading] = useState(true);
 
-  // Selected meeting in detail panel
-  const [selectedMeetingId, setSelectedMeetingId] = useState(null);
-  const [selectedTab, setSelectedTab] = useState('overview'); // overview, transcript, actions, participants
-
-  // Filter states
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all'); // all, completed, scheduled, in-progress
-  const [visibilityFilter, setVisibilityFilter] = useState('all'); // all, organisation, participants, private
-  const [memberFilter, setMemberFilter] = useState('all');
-  const [dateFilter, setDateFilter] = useState('all'); // all, today, 7days, 30days
-  const [sortAsc, setSortAsc] = useState(false); // date sort
+  const [activeTab, setActiveTab] = useState('all');
+  const [timeRange, setTimeRange] = useState('all');
+  const [teamFilter, setTeamFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortKey, setSortKey] = useState('date');
+  const [sortDir, setSortDir] = useState('desc');
+  const [selectedId, setSelectedId] = useState(null);
+  const [checked, setChecked] = useState(() => new Set());
+  const [favourites, setFavourites] = useState(() => new Set());
 
-  // Checkbox multi-select
-  const [selectedMeetingIds, setSelectedMeetingIds] = useState(new Set());
-
-  // Modals & Action feedbacks
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
-  const [datePickerOpen, setDatePickerOpen] = useState(false);
-
-  const datePickerRef = useRef(null);
-
-  const loadData = async () => {
-    if (!activeOrgId) {
-      setMeetings([]);
-      setMembers([]);
-      setMoms([]);
-      setSpeakerTurns({});
-      setLoading(false);
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const [
-        { data: meetingData },
-        { data: memberData },
-        { data: momData },
-        { data: turnData },
-      ] = await Promise.all([
-        applyWorkspaceScope(supabase.from('meetings').select('*'), activeOrgId).order(
-          'scheduled_start',
-          { ascending: false }
-        ),
-        supabase
-          .from('organisation_members')
-          .select('id, user_id, role, status, email, display_name, created_at')
-          .eq('organisation_id', activeOrgId),
-        supabase.from('mom').select('meeting_id, action_items, summary, decisions'),
-        supabase
-          .from('speaker_turns')
-          .select('id, meeting_id, speaker, text, start_time, end_time')
-          .order('start_time', { ascending: true }),
-      ]);
-
-      const scoped = meetingData || [];
-      setMeetings(scoped);
-      setMembers(memberData || []);
-
-      const scopedIds = new Set(scoped.map((m) => m.id));
-      setMoms(filterToMeetings(momData || [], scopedIds));
-
-      const byMeetingTurns = {};
-      filterToMeetings(turnData || [], scopedIds).forEach((t) => {
-        if (!byMeetingTurns[t.meeting_id]) byMeetingTurns[t.meeting_id] = [];
-        byMeetingTurns[t.meeting_id].push(t);
-      });
-      setSpeakerTurns(byMeetingTurns);
-
-      // Default select first meeting if none selected
-      if (scoped.length > 0 && !selectedMeetingId) {
-        setSelectedMeetingId(scoped[0].id);
-      }
-    } catch (err) {
-      console.error('Organisation meetings load error:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const currentUserId = session?.user?.id || null;
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadData() {
+      if (!activeOrgId) {
+        setMeetings([]);
+        setMembers([]);
+        setMoms([]);
+        setSpeakerTurns({});
+        return;
+      }
+      try {
+        const [
+          { data: meetingData },
+          { data: memberData },
+          { data: momData },
+          { data: turnData },
+        ] = await Promise.all([
+          applyWorkspaceScope(supabase.from('meetings').select('*'), activeOrgId).order(
+            'scheduled_start',
+            { ascending: false }
+          ),
+          supabase
+            .from('organisation_members')
+            .select('id, user_id, role, status, email, display_name, created_at')
+            .eq('organisation_id', activeOrgId),
+          supabase.from('mom').select('meeting_id, action_items'),
+          supabase.from('speaker_turns').select('meeting_id, speaker'),
+        ]);
+
+        if (cancelled) return;
+
+        const scoped = meetingData || [];
+        setMeetings(scoped);
+        setMembers(memberData || []);
+
+        const ids = new Set(scoped.map((m) => m.id));
+        setMoms(filterToMeetings(momData || [], ids));
+
+        const byMeeting = {};
+        filterToMeetings(turnData || [], ids).forEach((t) => {
+          if (!byMeeting[t.meeting_id]) byMeeting[t.meeting_id] = new Set();
+          if (t.speaker && t.speaker.trim()) byMeeting[t.meeting_id].add(t.speaker.trim());
+        });
+        setSpeakerTurns(byMeeting);
+      } catch (err) {
+        console.error('Organisation meetings load error:', err);
+      }
+    }
+
     loadData();
+    return () => {
+      cancelled = true;
+    };
   }, [activeOrgId]);
 
-  // Click outside listener for date filter dropdown
+  // Favourites persist per-browser until a DB column exists.
   useEffect(() => {
-    function handleClickOutside(e) {
-      if (datePickerRef.current && !datePickerRef.current.contains(e.target)) {
-        setDatePickerOpen(false);
-      }
+    try {
+      const raw = localStorage.getItem(FAVOURITES_KEY);
+      if (raw) setFavourites(new Set(JSON.parse(raw)));
+    } catch {
+      /* storage unavailable */
     }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Members map by user_id
-  const memberById = useMemo(() => {
-    const map = new Map();
-    members.forEach((m) => {
-      map.set(m.user_id, m);
-    });
-    return map;
-  }, [members]);
-
-  // Moms map by meeting_id
-  const momByMeetingId = useMemo(() => {
-    const map = new Map();
-    moms.forEach((m) => {
-      map.set(m.meeting_id, m);
-    });
-    return map;
-  }, [moms]);
-
-  // Metrics calculation
-  const metrics = useMemo(() => {
-    const totalMeetings = meetings.length;
-    const completedMeetings = meetings.filter((m) => m.status === 'completed').length;
-    const activeMembers = members.filter((m) => m.status === 'active').length || members.length;
-
-    let totalMinutes = 0;
-    meetings.forEach((m) => {
-      if (m.started_at && m.ended_at) {
-        const diff = Math.round((new Date(m.ended_at) - new Date(m.started_at)) / 60000);
-        totalMinutes += diff > 0 ? diff : (m.expected_duration_minutes || 0);
-      } else if (m.status === 'completed') {
-        totalMinutes += m.expected_duration_minutes || 30;
+  const toggleFavourite = (id) => {
+    setFavourites((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(FAVOURITES_KEY, JSON.stringify([...next]));
+      } catch {
+        /* storage unavailable */
       }
+      return next;
     });
+  };
 
-    const hours = Math.floor(totalMinutes / 60);
-    const mins = totalMinutes % 60;
-    const meetingTimeFormatted = totalMinutes > 0 ? (hours > 0 ? `${hours}h ${mins}m` : `${mins}m`) : '0h 0m';
+  /* ------------------------------------------------------------- filtering */
 
-    const actionItemsCount = moms.reduce(
-      (sum, m) => sum + (Array.isArray(m.action_items) ? m.action_items.length : 0),
-      0
-    );
+  const teamNames = useMemo(() => {
+    const set = new Set(meetings.map((m) => getTeam(m.title)));
+    return [...set].sort();
+  }, [meetings]);
 
-    return {
-      totalMeetings,
-      completedMeetings,
-      activeMembers,
-      meetingTime: meetingTimeFormatted,
-      actionItems: actionItemsCount,
-    };
-  }, [meetings, members, moms]);
-
-  // Trends calculation
-  const trends = useMemo(() => {
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-
-    const meetingsThisMonth = meetings.filter((m) => {
-      const d = new Date(m.scheduled_start || m.started_at || m.created_at);
-      return d >= thirtyDaysAgo && d <= now;
-    }).length;
-
-    const meetingsPrevMonth = meetings.filter((m) => {
-      const d = new Date(m.scheduled_start || m.started_at || m.created_at);
-      return d >= sixtyDaysAgo && d < thirtyDaysAgo;
-    }).length;
-
-    let meetingsTrend = '';
-    if (meetingsPrevMonth > 0) {
-      const pct = Math.round(((meetingsThisMonth - meetingsPrevMonth) / meetingsPrevMonth) * 100);
-      meetingsTrend = pct >= 0 ? `+${pct}% from last month` : `${pct}% from last month`;
-    } else if (meetingsThisMonth > 0) {
-      meetingsTrend = `${meetingsThisMonth} this month`;
-    } else {
-      meetingsTrend = '0 this month';
-    }
-
-    const newMembersThisMonth = members.filter((m) => {
-      const d = new Date(m.created_at);
-      return d >= thirtyDaysAgo;
-    }).length;
-    const membersTrend = newMembersThisMonth > 0 ? `+${newMembersThisMonth} new this month` : 'All time active';
-
-    return {
-      meetings: meetingsTrend,
-      members: membersTrend,
-    };
-  }, [meetings, members]);
-
-  // Filtered and sorted meetings
-  const filteredMeetings = useMemo(() => {
+  const visible = useMemo(() => {
     let result = [...meetings];
 
-    // Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       result = result.filter(
         (m) =>
-          (m.title && m.title.toLowerCase().includes(q)) ||
-          (m.meet_link && m.meet_link.toLowerCase().includes(q))
+          (m.title || '').toLowerCase().includes(q) ||
+          (m.meet_link || '').toLowerCase().includes(q) ||
+          getTeam(m.title).toLowerCase().includes(q)
       );
     }
 
-    // Status filter
-    if (statusFilter === 'completed') {
-      result = result.filter((m) => m.status === 'completed');
-    } else if (statusFilter === 'scheduled') {
-      result = result.filter((m) => m.status === 'scheduled');
-    } else if (statusFilter === 'in-progress') {
-      result = result.filter((m) => ['recording', 'joining', 'processing'].includes(m.status));
+    if (activeTab === 'mine') {
+      result = result.filter((m) => m.owner_id === currentUserId);
+    } else if (activeTab === 'team') {
+      result = result.filter((m) => m.owner_id && m.owner_id !== currentUserId);
+    } else if (activeTab === 'favourites') {
+      result = result.filter((m) => favourites.has(m.id));
     }
 
-    // Visibility filter
-    if (visibilityFilter !== 'all') {
-      result = result.filter((m) => (m.visibility || 'organisation').toLowerCase() === visibilityFilter.toLowerCase());
+    if (timeRange !== 'all') {
+      const cutoff = Date.now() - Number(timeRange) * 24 * 60 * 60 * 1000;
+      result = result.filter((m) => meetingStamp(m) >= cutoff);
     }
 
-    // Member filter
-    if (memberFilter !== 'all') {
-      result = result.filter((m) => m.owner_id === memberFilter);
+    if (teamFilter !== 'all') {
+      result = result.filter((m) => getTeam(m.title) === teamFilter);
     }
 
-    // Date range filter
-    if (dateFilter !== 'all') {
-      const now = new Date();
-      if (dateFilter === 'today') {
-        const todayStr = now.toISOString().split('T')[0];
-        result = result.filter((m) => (m.scheduled_start || m.started_at || m.created_at || '').startsWith(todayStr));
-      } else if (dateFilter === '7days') {
-        const cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        result = result.filter((m) => new Date(m.scheduled_start || m.started_at || m.created_at) >= cutoff);
-      } else if (dateFilter === '30days') {
-        const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        result = result.filter((m) => new Date(m.scheduled_start || m.started_at || m.created_at) >= cutoff);
-      }
+    if (statusFilter !== 'all') {
+      result = result.filter((m) => {
+        const { key, label } = statusMeta(m);
+        return statusFilter === 'processed' ? label === 'Processed' : key === statusFilter;
+      });
     }
 
-    // Sorting
+    const dir = sortDir === 'asc' ? 1 : -1;
     result.sort((a, b) => {
-      const dateA = new Date(a.scheduled_start || a.started_at || a.created_at).getTime();
-      const dateB = new Date(b.scheduled_start || b.started_at || b.created_at).getTime();
-      return sortAsc ? dateA - dateB : dateB - dateA;
+      switch (sortKey) {
+        case 'title':
+          return (a.title || '').localeCompare(b.title || '') * dir;
+        case 'team':
+          return getTeam(a.title).localeCompare(getTeam(b.title)) * dir;
+        case 'duration':
+          return (meetingMinutes(a) - meetingMinutes(b)) * dir;
+        case 'participants': {
+          const av = (speakerTurns[a.id] || new Set()).size;
+          const bv = (speakerTurns[b.id] || new Set()).size;
+          return (av - bv) * dir;
+        }
+        case 'status':
+          return statusMeta(a).label.localeCompare(statusMeta(b).label) * dir;
+        default:
+          return (meetingStamp(a) - meetingStamp(b)) * dir;
+      }
     });
 
     return result;
-  }, [meetings, searchQuery, statusFilter, visibilityFilter, memberFilter, dateFilter, sortAsc]);
+  }, [
+    meetings,
+    searchQuery,
+    activeTab,
+    timeRange,
+    teamFilter,
+    statusFilter,
+    sortKey,
+    sortDir,
+    currentUserId,
+    favourites,
+    speakerTurns,
+  ]);
 
-  // Selected meeting object
-  const selectedMeeting = useMemo(() => {
-    if (!selectedMeetingId) return null;
-    return meetings.find((m) => m.id === selectedMeetingId) || null;
-  }, [meetings, selectedMeetingId]);
-
-  // Turns and MOM for selected meeting
-  const selectedTurns = useMemo(() => {
-    if (!selectedMeetingId) return [];
-    return speakerTurns[selectedMeetingId] || [];
-  }, [speakerTurns, selectedMeetingId]);
-
-  const selectedMom = useMemo(() => {
-    if (!selectedMeetingId) return null;
-    return momByMeetingId.get(selectedMeetingId) || null;
-  }, [momByMeetingId, selectedMeetingId]);
-
-  // Distinct speakers of selected meeting
-  const selectedSpeakers = useMemo(() => {
-    const list = [];
-    const seen = new Set();
-    selectedTurns.forEach((t) => {
-      if (t.speaker && !seen.has(t.speaker)) {
-        seen.add(t.speaker);
-        list.push(t.speaker);
-      }
-    });
-    return list;
-  }, [selectedTurns]);
-
-  // Checkbox handlers
-  const handleSelectAll = (e) => {
-    if (e.target.checked) {
-      setSelectedMeetingIds(new Set(filteredMeetings.map((m) => m.id)));
-    } else {
-      setSelectedMeetingIds(new Set());
+  const onSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir('asc');
     }
   };
 
-  const handleToggleSelectOne = (id, e) => {
-    e.stopPropagation();
-    setSelectedMeetingIds((prev) => {
+  /* ----------------------------------------------------------------- stats */
+
+  const stats = useMemo(() => {
+    const minutes = meetings.reduce((sum, m) => sum + meetingMinutes(m), 0);
+    const actionItems = moms.reduce(
+      (sum, m) => sum + (Array.isArray(m.action_items) ? m.action_items.length : 0),
+      0
+    );
+    const participants = new Set();
+    Object.values(speakerTurns).forEach((set) => set && set.forEach((s) => participants.add(s)));
+
+    return {
+      meetings: meetings.length,
+      hours: (minutes / 60).toFixed(1),
+      participants: participants.size,
+      actionItems,
+    };
+  }, [meetings, moms, speakerTurns]);
+
+  const deltas = useMemo(() => {
+    const now = Date.now();
+    const win = 28 * 24 * 60 * 60 * 1000;
+    const inRange = (m, from, to) => {
+      const t = meetingStamp(m);
+      return t >= from && t < to;
+    };
+
+    const cur = meetings.filter((m) => inRange(m, now - win, now + 1));
+    const prev = meetings.filter((m) => inRange(m, now - win * 2, now - win));
+
+    const pct = (a, b) => (b === 0 ? (a === 0 ? 0 : 100) : Math.round(((a - b) / b) * 100));
+    const mins = (list) => list.reduce((s, m) => s + meetingMinutes(m), 0);
+    const speakerCount = (list) => {
+      const s = new Set();
+      list.forEach((m) => (speakerTurns[m.id] || new Set()).forEach((x) => s.add(x)));
+      return s.size;
+    };
+    const actionCount = (list) => {
+      const ids = new Set(list.map((m) => m.id));
+      return moms
+        .filter((m) => ids.has(m.meeting_id))
+        .reduce((s, m) => s + (Array.isArray(m.action_items) ? m.action_items.length : 0), 0);
+    };
+
+    return {
+      meetings: pct(cur.length, prev.length),
+      hours: pct(mins(cur), mins(prev)),
+      participants: pct(speakerCount(cur), speakerCount(prev)),
+      actionItems: pct(actionCount(cur), actionCount(prev)),
+    };
+  }, [meetings, moms, speakerTurns]);
+
+  const topTeams = useMemo(() => {
+    const counts = new Map();
+    meetings.forEach((m) => {
+      const t = getTeam(m.title);
+      counts.set(t, (counts.get(t) || 0) + 1);
+    });
+    const rows = [...counts.entries()]
+      .map(([name, count]) => ({ name, count, color: teamColor(name) }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+    const max = Math.max(1, ...rows.map((r) => r.count));
+    return rows.map((r) => ({ ...r, pct: Math.round((r.count / max) * 100) }));
+  }, [meetings]);
+
+  /* ---------------------------------------------------------------- render */
+
+  const allVisibleChecked = visible.length > 0 && visible.every((m) => checked.has(m.id));
+
+  const toggleAll = () => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (allVisibleChecked) visible.forEach((m) => next.delete(m.id));
+      else visible.forEach((m) => next.add(m.id));
+      return next;
+    });
+  };
+
+  const toggleOne = (id) => {
+    setChecked((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -402,503 +388,367 @@ export default function OrganisationMeetingsPage() {
     });
   };
 
-  // Quick action: share meeting
-  const handleShareMeeting = (meet) => {
-    if (!meet) return;
-    const shareUrl = `${window.location.origin}/meetings/${meet.id}`;
-    navigator.clipboard.writeText(shareUrl).then(() => {
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2000);
-    });
-  };
-
-  // Quick action: download transcript
-  const handleDownloadTranscript = (meet) => {
-    if (!meet) return;
-    const turns = speakerTurns[meet.id] || [];
-    let text = `Meeting: ${meet.title}\nDate: ${new Date(meet.scheduled_start || meet.created_at).toLocaleString()}\n\n`;
-    if (turns.length === 0) {
-      text += 'No transcript turns recorded.';
-    } else {
-      turns.forEach((t) => {
-        text += `[${t.speaker || 'Unknown'}]: ${t.text}\n`;
-      });
-    }
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${meet.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_transcript.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <>
       <TopHeader
-        placeholder="Search meetings, transcripts, or insights..."
-        showScheduleButton={false}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        placeholder="Search meetings, people, teams, or topics..."
       />
 
-      <OrganisationPage
-        breadcrumb={
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ color: '#64748B' }}>Organisation</span>
-            <span style={{ color: '#94A3B8' }}>&rsaquo;</span>
-            <span style={{ color: '#0F172A', fontWeight: 600 }}>Meetings</span>
-          </div>
-        }
-        title="Organisation Meetings"
-        subtitle="Manage and view all meetings in your organisation workspace."
-        actions={
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => setIsModalOpen(true)}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '9px 18px',
-              fontSize: '13px',
-              fontWeight: 600,
-              borderRadius: '8px',
-              backgroundColor: '#0066FF',
-              color: '#FFFFFF',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            <Plus size={15} strokeWidth={2.5} aria-hidden="true" />
-            <span>Add Meeting</span>
-            <ChevronDown size={14} style={{ marginLeft: '2px' }} />
-          </button>
-        }
-      >
-        {/* =================================================================== */}
-        {/* 1. TOP METRICS ROW (4 Cards)                                         */}
-        {/* =================================================================== */}
-        <section className="org-metrics-grid">
-          {/* Card 1: Total Meetings */}
-          <div className="org-metric-card">
-            <div className="org-metric-top">
-              <div className="org-metric-icon blue">
-                <Video size={20} strokeWidth={2} aria-hidden="true" />
-              </div>
-              <div>
-                <div className="org-metric-val">{metrics.totalMeetings}</div>
-                <div className="org-metric-lbl">Total Meetings</div>
-              </div>
-            </div>
-            <div className="org-metric-trend">
-              <TrendingUp size={14} aria-hidden="true" />
-              <span>{trends.meetings}</span>
-            </div>
+      <OrganisationPage chrome={false}>
+        {/* ------------------------------------------------------------- hero */}
+        <section className="org-mt-hero">
+          <span className="org-mt-hero-badge">Organisation Meetings</span>
+          <h1 className="org-mt-hero-title">
+            All organisation meetings, <em>in one place.</em>
+          </h1>
+          <p className="org-mt-hero-sub">
+            Recordings, transcripts, summaries and action items — across your entire organisation.
+          </p>
+
+          <div className="org-mt-hero-doodle" aria-hidden="true">
+            <span className="org-mt-doodle-text">{`Find and manage all\nyour team meetings.`}</span>
+            <svg width="40" height="44" viewBox="0 0 50 52" fill="none">
+              <path
+                d="M10 6 C 20 18, 30 28, 34 44 M 24 44 L 34 45 L 37 34"
+                stroke="#0066FF"
+                strokeWidth="2.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </div>
 
-          {/* Card 2: Total Meeting Time */}
-          <div className="org-metric-card">
-            <div className="org-metric-top">
-              <div className="org-metric-icon purple">
-                <Clock size={20} strokeWidth={2} aria-hidden="true" />
-              </div>
-              <div>
-                <div className="org-metric-val">{metrics.meetingTime}</div>
-                <div className="org-metric-lbl">Total Meeting Time</div>
-              </div>
-            </div>
-            <div className="org-metric-trend">
-              <TrendingUp size={14} aria-hidden="true" />
-              <span>{metrics.completedMeetings} completed</span>
-            </div>
-          </div>
+          {/* Roster card with a processed-check badge */}
+          <div className="org-mt-hero-art" aria-hidden="true">
+            <svg viewBox="0 0 300 172" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ width: '100%', height: '100%' }}>
+              <defs>
+                <linearGradient id="mt-blob" x1="150" y1="20" x2="150" y2="172" gradientUnits="userSpaceOnUse">
+                  <stop stopColor="#D6E7FC" />
+                  <stop offset="1" stopColor="#EDF4FE" />
+                </linearGradient>
+              </defs>
 
-          {/* Card 3: Team Members */}
-          <div className="org-metric-card">
-            <div className="org-metric-top">
-              <div className="org-metric-icon green">
-                <Users size={20} strokeWidth={2} aria-hidden="true" />
-              </div>
-              <div>
-                <div className="org-metric-val">{metrics.activeMembers}</div>
-                <div className="org-metric-lbl">Team Members</div>
-              </div>
-            </div>
-            <div className="org-metric-trend">
-              <TrendingUp size={14} aria-hidden="true" />
-              <span>{trends.members}</span>
-            </div>
-          </div>
+              <path d="M40 172 C40 120, 78 92, 132 92 C186 92, 224 122, 224 172 Z" fill="url(#mt-blob)" opacity="0.75" />
+              <circle cx="248" cy="34" r="26" fill="#DCEBFD" opacity="0.6" />
 
-          {/* Card 4: Action Items */}
-          <div className="org-metric-card">
-            <div className="org-metric-top">
-              <div className="org-metric-icon orange">
-                <FileText size={20} strokeWidth={2} aria-hidden="true" />
-              </div>
-              <div>
-                <div className="org-metric-val">{metrics.actionItems}</div>
-                <div className="org-metric-lbl">Action Items</div>
-              </div>
-            </div>
-            <div className="org-metric-trend">
-              <TrendingUp size={14} aria-hidden="true" />
-              <span>From meeting MOMs</span>
-            </div>
+              {/* document card */}
+              <rect x="58" y="16" width="168" height="140" rx="14" fill="#FFFFFF" />
+              <rect x="58.75" y="16.75" width="166.5" height="138.5" rx="13.25" stroke="#DCE7F5" strokeWidth="1.5" />
+              <rect x="74" y="30" width="52" height="7" rx="3.5" fill="#0066FF" opacity="0.85" />
+
+              {/* roster rows */}
+              <g>
+                <circle cx="88" cy="60" r="12" fill="#E3EDFC" />
+                <circle cx="88" cy="57" r="4" fill="#7FA8E0" />
+                <path d="M80.5 67 C81.5 61.5, 94.5 61.5, 95.5 67" fill="#7FA8E0" />
+                <rect x="110" y="54" width="66" height="7" rx="3.5" fill="#0066FF" />
+                <rect x="110" y="66" width="98" height="6" rx="3" fill="#DCE4EE" />
+              </g>
+              <g>
+                <circle cx="88" cy="98" r="12" fill="#E3EDFC" />
+                <circle cx="88" cy="95" r="4" fill="#7FA8E0" />
+                <path d="M80.5 105 C81.5 99.5, 94.5 99.5, 95.5 105" fill="#7FA8E0" />
+                <rect x="110" y="92" width="52" height="7" rx="3.5" fill="#0066FF" />
+                <rect x="110" y="104" width="86" height="6" rx="3" fill="#DCE4EE" />
+              </g>
+              <g>
+                <circle cx="88" cy="136" r="12" fill="#E3EDFC" />
+                <circle cx="88" cy="133" r="4" fill="#7FA8E0" />
+                <path d="M80.5 143 C81.5 137.5, 94.5 137.5, 95.5 143" fill="#7FA8E0" />
+                <rect x="110" y="130" width="60" height="7" rx="3.5" fill="#0066FF" />
+                <rect x="110" y="142" width="92" height="6" rx="3" fill="#DCE4EE" />
+              </g>
+
+              {/* processed badge */}
+              <circle cx="224" cy="128" r="27" fill="#FFFFFF" />
+              <circle cx="224" cy="128" r="23" fill="#0066FF" />
+              <path
+                d="M214 128 L221 135 L235 121"
+                stroke="#FFFFFF"
+                strokeWidth="3.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </div>
         </section>
 
-        {/* =================================================================== */}
-        {/* 2. FILTER & CONTROLS BAR                                             */}
-        {/* =================================================================== */}
-        <div className="org-meetings-filter-bar">
-          {/* Search box */}
-          <div className="org-filter-search-wrap">
-            <Search size={15} color="#94A3B8" style={{ position: 'absolute', left: '12px' }} />
-            <input
-              type="text"
-              placeholder="Search meetings..."
-              className="org-filter-search-input"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-
-          {/* Status Dropdown */}
-          <div className="org-filter-select-wrap">
-            <select
-              className="org-filter-select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <option value="all">All Meetings</option>
-              <option value="completed">Completed</option>
-              <option value="scheduled">Scheduled</option>
-              <option value="in-progress">In Progress</option>
-            </select>
-            <ChevronDown size={14} color="#64748B" style={{ position: 'absolute', right: '10px', pointerEvents: 'none' }} />
-          </div>
-
-          {/* Visibility Dropdown */}
-          <div className="org-filter-select-wrap">
-            <select
-              className="org-filter-select"
-              value={visibilityFilter}
-              onChange={(e) => setVisibilityFilter(e.target.value)}
-            >
-              <option value="all">All Visibility</option>
-              <option value="organisation">Organisation</option>
-              <option value="participants">Participants</option>
-              <option value="private">Private</option>
-            </select>
-            <ChevronDown size={14} color="#64748B" style={{ position: 'absolute', right: '10px', pointerEvents: 'none' }} />
-          </div>
-
-          {/* Members Dropdown */}
-          <div className="org-filter-select-wrap">
-            <select
-              className="org-filter-select"
-              value={memberFilter}
-              onChange={(e) => setMemberFilter(e.target.value)}
-            >
-              <option value="all">All Members</option>
-              {members.map((m) => (
-                <option key={m.user_id || m.email} value={m.user_id}>
-                  {m.display_name || m.email || 'Member'}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={14} color="#64748B" style={{ position: 'absolute', right: '10px', pointerEvents: 'none' }} />
-          </div>
-
-          {/* Date Range Picker */}
-          <div style={{ position: 'relative' }} ref={datePickerRef}>
-            <button
-              type="button"
-              className="org-filter-date-btn"
-              onClick={() => setDatePickerOpen(!datePickerOpen)}
-            >
-              <Calendar size={14} color="#64748B" />
-              <span>
-                {dateFilter === 'all'
-                  ? 'Select date range'
-                  : dateFilter === 'today'
-                  ? 'Today'
-                  : dateFilter === '7days'
-                  ? 'Last 7 days'
-                  : 'Last 30 days'}
-              </span>
-            </button>
-
-            {datePickerOpen && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 6px)',
-                  right: 0,
-                  width: '180px',
-                  backgroundColor: '#FFFFFF',
-                  borderRadius: '10px',
-                  border: '1px solid #E2E8F0',
-                  boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
-                  zIndex: 40,
-                  padding: '6px',
-                }}
+        {/* ------------------------------------------------- tabs + controls */}
+        <div className="org-mt-toolbar">
+          <div className="org-mt-tabs" role="tablist" aria-label="Meeting scope">
+            {[
+              { id: 'all', label: 'All Meetings', icon: <Calendar size={15} strokeWidth={2.2} /> },
+              { id: 'mine', label: 'My Meetings', icon: <User size={15} strokeWidth={2.2} /> },
+              { id: 'team', label: 'Team Meetings', icon: <Users size={15} strokeWidth={2.2} /> },
+              { id: 'favourites', label: 'Favourites', icon: <Heart size={15} strokeWidth={2.2} /> },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                className={`org-mt-tab ${activeTab === tab.id ? 'active' : ''}`}
+                onClick={() => setActiveTab(tab.id)}
               >
-                {[
-                  { id: 'all', label: 'All Time' },
-                  { id: 'today', label: 'Today' },
-                  { id: '7days', label: 'Last 7 Days' },
-                  { id: '30days', label: 'Last 30 Days' },
-                ].map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      fontSize: '12.5px',
-                      textAlign: 'left',
-                      background: dateFilter === item.id ? '#EFF6FF' : 'none',
-                      color: dateFilter === item.id ? '#0066FF' : '#334155',
-                      fontWeight: dateFilter === item.id ? 600 : 400,
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                    }}
-                    onClick={() => {
-                      setDateFilter(item.id);
-                      setDatePickerOpen(false);
-                    }}
-                  >
-                    {item.label}
-                  </button>
+                {tab.icon}
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="org-mt-controls">
+            <label className="org-mt-ctl">
+              <Calendar size={15} strokeWidth={2} aria-hidden="true" />
+              {timeRange === 'all' ? 'All Time' : `Last ${timeRange} days`}
+              <ChevronDown size={14} className="org-mt-ctl-chevron" aria-hidden="true" />
+              <select
+                className="org-mt-ctl-select"
+                value={timeRange}
+                onChange={(e) => setTimeRange(e.target.value)}
+                aria-label="Filter by time range"
+              >
+                <option value="all">All Time</option>
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+              </select>
+            </label>
+
+            <label className="org-mt-ctl">
+              <Users size={15} strokeWidth={2} aria-hidden="true" />
+              {teamFilter === 'all' ? 'All Teams' : teamFilter}
+              <ChevronDown size={14} className="org-mt-ctl-chevron" aria-hidden="true" />
+              <select
+                className="org-mt-ctl-select"
+                value={teamFilter}
+                onChange={(e) => setTeamFilter(e.target.value)}
+                aria-label="Filter by team"
+              >
+                <option value="all">All Teams</option>
+                {teamNames.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
                 ))}
-              </div>
-            )}
+              </select>
+            </label>
+
+            <label className="org-mt-ctl">
+              <Filter size={15} strokeWidth={2} aria-hidden="true" />
+              {statusFilter === 'all' ? 'Filter' : statusFilter === 'processed' ? 'Processed' : statusFilter}
+              <ChevronDown size={14} className="org-mt-ctl-chevron" aria-hidden="true" />
+              <select
+                className="org-mt-ctl-select"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                aria-label="Filter by status"
+              >
+                <option value="all">Filter</option>
+                <option value="processed">Processed</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="processing">Processing</option>
+                <option value="failed">Failed</option>
+              </select>
+            </label>
+
+            <label className="org-mt-ctl">
+              <ArrowUpDown size={15} strokeWidth={2} aria-hidden="true" />
+              Sort
+              <ChevronDown size={14} className="org-mt-ctl-chevron" aria-hidden="true" />
+              <select
+                className="org-mt-ctl-select"
+                value={`${sortKey}:${sortDir}`}
+                onChange={(e) => {
+                  const [k, d] = e.target.value.split(':');
+                  setSortKey(k);
+                  setSortDir(d);
+                }}
+                aria-label="Sort meetings"
+              >
+                <option value="date:desc">Newest first</option>
+                <option value="date:asc">Oldest first</option>
+                <option value="title:asc">Title A–Z</option>
+                <option value="duration:desc">Longest first</option>
+                <option value="duration:asc">Shortest first</option>
+                <option value="participants:desc">Most participants</option>
+                <option value="status:asc">Status A–Z</option>
+              </select>
+            </label>
           </div>
         </div>
 
-        {/* =================================================================== */}
-        {/* 3. MAIN SPLIT VIEW: Table (Left) + Detail Panel (Right)              */}
-        {/* =================================================================== */}
-        <div className="org-meetings-layout">
-          {/* LEFT: Meetings Table */}
-          <div className="org-panel-card" style={{ padding: '0 0 16px 0', overflow: 'hidden' }}>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="org-table">
+        {/* --------------------------------------------------------- content */}
+        <div className="org-mt-split">
+          {/* table */}
+          <div className="org-mt-card">
+            <div className="org-mt-table-wrap">
+              <table className="org-mt-table">
                 <thead>
                   <tr>
-                    <th style={{ width: '40px', textAlign: 'center', paddingLeft: '16px' }}>
+                    <th style={{ width: 36, paddingLeft: 16 }}>
                       <input
                         type="checkbox"
-                        checked={
-                          filteredMeetings.length > 0 &&
-                          selectedMeetingIds.size === filteredMeetings.length
-                        }
-                        onChange={handleSelectAll}
-                        style={{ cursor: 'pointer' }}
+                        className="org-mt-check"
+                        checked={allVisibleChecked}
+                        onChange={toggleAll}
                         aria-label="Select all meetings"
                       />
                     </th>
-                    <th>Title</th>
-                    <th
-                      style={{ cursor: 'pointer', userSelect: 'none' }}
-                      onClick={() => setSortAsc(!sortAsc)}
-                      title="Click to sort by date"
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                        <span>Date</span>
-                        <span style={{ fontSize: '11px' }}>{sortAsc ? '↑' : '↓'}</span>
-                      </div>
-                    </th>
-                    <th>Participants</th>
-                    <th>Duration</th>
-                    <th>Visibility</th>
-                    <th>Owner</th>
-                    <th>Action</th>
+                    <Th label="Meeting" sortKey="title" current={sortKey} dir={sortDir} onSort={onSort} />
+                    <Th label="Date & Time" sortKey="date" current={sortKey} dir={sortDir} onSort={onSort} />
+                    <Th label="Team" sortKey="team" current={sortKey} dir={sortDir} onSort={onSort} />
+                    <Th
+                      label="Participants"
+                      sortKey="participants"
+                      current={sortKey}
+                      dir={sortDir}
+                      onSort={onSort}
+                    />
+                    <Th label="Duration" sortKey="duration" current={sortKey} dir={sortDir} onSort={onSort} />
+                    <Th label="Status" sortKey="status" current={sortKey} dir={sortDir} onSort={onSort} />
+                    <th style={{ width: 38 }} />
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredMeetings.length === 0 ? (
+                  {visible.length === 0 ? (
                     <tr>
-                      <td colSpan={8} style={{ textAlign: 'center', padding: '40px 0', color: '#94A3B8' }}>
-                        No organisation meetings found matching your filters.
+                      <td colSpan={8} style={{ padding: '48px 20px', textAlign: 'center' }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0F172A', marginBottom: 4 }}>
+                          {activeTab === 'favourites'
+                            ? 'No favourite meetings yet.'
+                            : 'No meetings found.'}
+                        </div>
+                        <div style={{ fontSize: 12.5, color: '#94A3B8' }}>
+                          {activeTab === 'favourites'
+                            ? 'Tap the menu on any meeting to add it here.'
+                            : 'Try widening your filters, or schedule a new meeting.'}
+                        </div>
                       </td>
                     </tr>
                   ) : (
-                    filteredMeetings.map((m) => {
-                      const isSelected = selectedMeetingId === m.id;
-                      const isChecked = selectedMeetingIds.has(m.id);
-                      const meetTurns = speakerTurns[m.id] || [];
-                      const distinctSpeakers = Array.from(new Set(meetTurns.map((t) => t.speaker).filter(Boolean)));
-
-                      // Duration
-                      const durationMins =
-                        m.expected_duration_minutes ||
-                        (m.ended_at && m.started_at
-                          ? Math.round((new Date(m.ended_at) - new Date(m.started_at)) / 60000)
-                          : 30);
-                      const durationStr = formatDuration(durationMins);
-
-                      // Visibility badge class
-                      const visClass = (m.visibility || 'organisation').toLowerCase();
-
-                      // Owner info
-                      const owner = memberById.get(m.owner_id);
-                      const ownerName = owner?.display_name || (m.owner_id ? 'Member' : 'Harsh Vardhan');
-                      const ownerInitials = getInitials(ownerName, owner?.email);
-                      const ownerColors = getAvatarColors(ownerName);
+                    visible.map((m) => {
+                      const team = getTeam(m.title);
+                      const platform = getPlatform(m);
+                      const { key: statusKey, label: statusLabel } = statusMeta(m);
+                      const speakers = [...(speakerTurns[m.id] || new Set())];
+                      const stamp = m.started_at || m.scheduled_start || m.created_at;
+                      const isFav = favourites.has(m.id);
 
                       return (
                         <tr
                           key={m.id}
-                          className={`org-table-row ${isSelected ? 'selected' : ''}`}
-                          onClick={() => setSelectedMeetingId(m.id)}
+                          className={selectedId === m.id ? 'selected' : ''}
+                          onClick={() => setSelectedId(selectedId === m.id ? null : m.id)}
                         >
-                          {/* Checkbox */}
-                          <td style={{ textAlign: 'center', paddingLeft: '16px' }}>
+                          <td style={{ paddingLeft: 16 }} onClick={(e) => e.stopPropagation()}>
                             <input
                               type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => handleToggleSelectOne(m.id, e)}
-                              style={{ cursor: 'pointer' }}
-                              aria-label={`Select ${m.title}`}
+                              className="org-mt-check"
+                              checked={checked.has(m.id)}
+                              onChange={() => toggleOne(m.id)}
+                              aria-label={`Select ${m.title || 'meeting'}`}
                             />
                           </td>
 
-                          {/* Title + Platform Icon */}
                           <td>
-                            <div className="org-meeting-title-cell">
-                              <div
-                                style={{
-                                  width: '28px',
-                                  height: '28px',
-                                  borderRadius: '6px',
-                                  backgroundColor: '#EFF6FF',
-                                  color: '#0066FF',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  flexShrink: 0,
-                                }}
-                              >
-                                <Video size={15} />
-                              </div>
-                              <span
-                                style={{
-                                  whiteSpace: 'nowrap',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  maxWidth: '180px',
-                                }}
-                                title={m.title}
-                              >
-                                {m.title || 'Untitled Meeting'}
+                            <div className="org-mt-meeting">
+                              <span className={`org-mt-platform ${platform}`}>
+                                {platform === 'zoom' ? (
+                                  <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '-0.02em' }}>
+                                    zoom
+                                  </span>
+                                ) : (
+                                  <Video size={15} strokeWidth={2.2} />
+                                )}
+                              </span>
+                              <span className="org-mt-meeting-text">
+                                <span className="org-mt-meeting-title" title={m.title}>
+                                  {m.title || 'Untitled Meeting'}
+                                </span>
+                                <span className="org-mt-meeting-sub">
+                  {platform === 'other' ? 'Online Meeting' : PLATFORM_LABEL[platform]}
+                </span>
                               </span>
                             </div>
                           </td>
 
-                          {/* Date */}
-                          <td style={{ whiteSpace: 'nowrap' }} className="tabular-nums">
-                            {formatMeetingDate(m.scheduled_start || m.started_at || m.created_at)}
+                          <td>
+                            <span className="org-mt-dt">
+                              {stamp
+                                ? new Date(stamp).toLocaleTimeString([], {
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                    hour12: true,
+                                  })
+                                : '—'}
+                              <span className="org-mt-dt-sub">{formatDayLabel(stamp)}</span>
+                            </span>
                           </td>
 
-                          {/* Participants Avatar Stack */}
                           <td>
-                            {distinctSpeakers.length === 0 ? (
-                              <span style={{ color: '#94A3B8', fontSize: '12px' }}>—</span>
+                            <span
+                              className="org-mt-team"
+                              style={{
+                                backgroundColor: `${teamColor(team)}1A`,
+                                color: teamColor(team),
+                              }}
+                            >
+                              {team}
+                            </span>
+                          </td>
+
+                          <td>
+                            {speakers.length === 0 ? (
+                              <span style={{ color: '#CBD5E1' }}>—</span>
                             ) : (
-                              <div className="org-avatar-stack">
-                                {distinctSpeakers.slice(0, 3).map((speaker, sIdx) => {
-                                  const colors = AVATAR_PALETTES[sIdx % AVATAR_PALETTES.length];
+                              <div className="org-mt-stack">
+                                {speakers.slice(0, 2).map((s) => {
+                                  const c = getAvatarColors(s);
                                   return (
-                                    <div
-                                      key={speaker + sIdx}
-                                      className="org-avatar-stack-item"
-                                      style={{ backgroundColor: colors.text }}
-                                      title={speaker}
+                                    <span
+                                      key={s}
+                                      className="org-mt-av"
+                                      style={{ backgroundColor: c.bg, color: c.text }}
+                                      title={s}
                                     >
-                                      {speaker[0]?.toUpperCase() || 'U'}
-                                    </div>
+                                      {getInitials(s)}
+                                    </span>
                                   );
                                 })}
-                                {distinctSpeakers.length > 3 && (
-                                  <div className="org-avatar-stack-more">
-                                    +{distinctSpeakers.length - 3}
-                                  </div>
+                                {speakers.length > 2 && (
+                                  <span className="org-mt-av org-mt-av-more">+{speakers.length - 2}</span>
                                 )}
                               </div>
                             )}
                           </td>
 
-                          {/* Duration */}
-                          <td className="tabular-nums" style={{ whiteSpace: 'nowrap' }}>
-                            {durationStr}
+                          <td>
+                            <span className="org-mt-dur">{formatDuration(meetingMinutes(m))}</span>
                           </td>
 
-                          {/* Visibility */}
                           <td>
-                            <span className={`org-vis-badge ${visClass}`}>
-                              {m.visibility || 'Organisation'}
+                            <span className={`org-mt-status ${statusKey}`}>
+                              <span className="org-mt-status-dot" />
+                              {statusLabel}
                             </span>
                           </td>
 
-                          {/* Owner */}
-                          <td>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap' }}>
-                              <div
-                                style={{
-                                  width: '24px',
-                                  height: '24px',
-                                  borderRadius: '50%',
-                                  backgroundColor: ownerColors.bg,
-                                  color: ownerColors.text,
-                                  fontSize: '10px',
-                                  fontWeight: 700,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                }}
-                              >
-                                {ownerInitials}
-                              </div>
-                              <span style={{ fontSize: '12.5px', color: '#334155' }}>
-                                {ownerName.split(' ')[0]}
-                              </span>
-                            </div>
-                          </td>
-
-                          {/* Actions */}
-                          <td style={{ whiteSpace: 'nowrap' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <button
-                                type="button"
-                                className="org-btn-view"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedMeetingId(m.id);
-                                }}
-                              >
-                                View
-                              </button>
-                              <Link
-                                href={`/meetings/${m.id}`}
-                                className="action-pill-btn"
-                                style={{
-                                  color: '#94A3B8',
-                                  padding: '4px',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  textDecoration: 'none',
-                                }}
-                                title="Open full record"
-                                aria-label="Open full record"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <ExternalLink size={14} />
-                              </Link>
-                            </div>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              className="org-mt-kebab"
+                              aria-label={`More actions for ${m.title || 'meeting'}`}
+                              title={isFav ? 'Remove from favourites' : 'Add to favourites'}
+                              onClick={() => toggleFavourite(m.id)}
+                            >
+                              {isFav ? (
+                                <Heart size={15} fill="#EF4444" strokeWidth={0} />
+                              ) : (
+                                <MoreHorizontal size={16} />
+                              )}
+                            </button>
                           </td>
                         </tr>
                       );
@@ -907,438 +757,204 @@ export default function OrganisationMeetingsPage() {
                 </tbody>
               </table>
             </div>
-
-            {/* Pagination Footer */}
-            <div className="org-pagination-wrap" style={{ padding: '16px 20px 0' }}>
-              <div>
-                Showing 1–{filteredMeetings.length} of {meetings.length} meetings
-              </div>
-              <div className="org-pagination-controls">
-                <button type="button" className="org-page-btn" disabled aria-label="Previous page">
-                  &lt;
-                </button>
-                <button type="button" className="org-page-btn active">
-                  1
-                </button>
-                <button type="button" className="org-page-btn" disabled aria-label="Next page">
-                  &gt;
-                </button>
-              </div>
-            </div>
           </div>
 
-          {/* RIGHT: Selected Meeting Detail Panel & Quick Actions */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {selectedMeeting ? (
-              <div className="org-meet-detail-card">
-                {/* Header */}
-                <div className="org-meet-detail-header">
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                    <div
-                      style={{
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '8px',
-                        backgroundColor: '#EFF6FF',
-                        color: '#0066FF',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <Video size={18} />
-                    </div>
-                    <div>
-                      <div className="org-meet-detail-title">{selectedMeeting.title}</div>
-                      <div className="org-meet-detail-meta tabular-nums">
-                        {formatMeetingDate(selectedMeeting.scheduled_start || selectedMeeting.started_at)} (
-                        {formatDuration(selectedMeeting.expected_duration_minutes || 30)})
-                      </div>
-                      <div className="org-meet-detail-tag">Organisation meeting</div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedMeetingId(null)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#94A3B8',
-                      cursor: 'pointer',
-                      padding: '4px',
-                      borderRadius: '4px',
-                    }}
-                    aria-label="Close detail panel"
-                  >
-                    <X size={16} />
-                  </button>
+          {/* right rail */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            {/* select-a-meeting / selection summary */}
+            <div className="org-mt-card org-mt-card-pad">
+              {selectedId ? (
+                <SelectedSummary
+                  meeting={visible.find((m) => m.id === selectedId) || meetings.find((m) => m.id === selectedId)}
+                  speakers={[...(speakerTurns[selectedId] || new Set())]}
+                  actionItems={
+                    (moms.find((m) => m.meeting_id === selectedId)?.action_items || []).length
+                  }
+                  onClose={() => setSelectedId(null)}
+                />
+              ) : (
+                <div className="org-mt-empty" style={{ padding: '30px 12px 32px' }}>
+                  <span className="org-mt-empty-icon">
+                    <ClipboardList size={22} strokeWidth={1.9} />
+                  </span>
+                  <div className="org-mt-empty-title">Select a meeting</div>
+                  <p className="org-mt-empty-sub">
+                    Choose a meeting from the list to view details, transcript, summary and action
+                    items.
+                  </p>
                 </div>
+              )}
+            </div>
 
-                {/* Tabs */}
-                <div className="org-meet-tabs">
-                  {[
-                    { id: 'overview', label: 'Overview' },
-                    { id: 'transcript', label: 'Transcript' },
-                    { id: 'actions', label: 'Action Items' },
-                    { id: 'participants', label: 'Participants' },
-                  ].map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      className={`org-meet-tab-btn ${selectedTab === tab.id ? 'active' : ''}`}
-                      onClick={() => setSelectedTab(tab.id)}
-                    >
-                      {tab.label}
-                    </button>
+            {/* meeting stats */}
+            <div className="org-mt-card org-mt-card-pad">
+              <div className="org-mt-card-head">
+                <span className="org-mt-card-title">Meeting Stats</span>
+                <span className="org-mt-ctl" style={{ height: 30, fontSize: 12, padding: '0 10px' }}>
+                  Last 4 weeks
+                  <ChevronDown size={13} className="org-mt-ctl-chevron" />
+                </span>
+              </div>
+
+              <div className="org-mt-stats-grid">
+                <MiniStat
+                  icon={<Calendar size={15} strokeWidth={2} />}
+                  value={stats.meetings}
+                  delta={deltas.meetings}
+                  label="Total Meetings"
+                />
+                <MiniStat
+                  icon={<Clock size={15} strokeWidth={2} />}
+                  value={stats.hours}
+                  delta={deltas.hours}
+                  label="Hours Recorded"
+                />
+                <MiniStat
+                  icon={<Users size={15} strokeWidth={2} />}
+                  value={stats.participants}
+                  delta={deltas.participants}
+                  label="Total Participants"
+                />
+                <MiniStat
+                  icon={<FileText size={15} strokeWidth={2} />}
+                  value={stats.actionItems}
+                  delta={deltas.actionItems}
+                  label="Action Items"
+                />
+              </div>
+            </div>
+
+            {/* top teams */}
+            <div className="org-mt-card org-mt-card-pad">
+              <div className="org-mt-card-head">
+                <span className="org-mt-card-title">Top Teams</span>
+                <Link href="/organisation/members" className="org-mt-link">
+                  View All <ArrowRight size={12} strokeWidth={2.4} aria-hidden="true" />
+                </Link>
+              </div>
+
+              {topTeams.length === 0 ? (
+                <p style={{ fontSize: 12.5, color: '#94A3B8', marginTop: 14 }}>
+                  No team activity yet.
+                </p>
+              ) : (
+                <div className="org-mt-team-list">
+                  {topTeams.map((t) => (
+                    <div key={t.name} className="org-mt-team-row">
+                      <span className="org-mt-team-dot" style={{ backgroundColor: t.color }} />
+                      <span className="org-mt-team-name" title={t.name}>
+                        {t.name}
+                      </span>
+                      <span className="org-mt-bar">
+                        <span
+                          className="org-mt-bar-fill"
+                          style={{ width: `${t.pct}%`, backgroundColor: t.color }}
+                        />
+                      </span>
+                      <span className="org-mt-team-count">
+                        {t.count} {t.count === 1 ? 'meeting' : 'meetings'}
+                      </span>
+                    </div>
                   ))}
                 </div>
-
-                {/* TAB 1: OVERVIEW */}
-                {selectedTab === 'overview' && (
-                  <div className="org-meet-info-section">
-                    {/* Date & Time */}
-                    <div className="org-meet-info-row">
-                      <div className="org-meet-info-icon-wrap">
-                        <Calendar size={16} />
-                      </div>
-                      <div>
-                        <div className="org-meet-info-label">Date &amp; Time</div>
-                        <div className="org-meet-info-val tabular-nums">
-                          {new Date(
-                            selectedMeeting.started_at || selectedMeeting.scheduled_start || selectedMeeting.created_at
-                          ).toLocaleString('en-US', {
-                            weekday: 'short',
-                            day: 'numeric',
-                            month: 'short',
-                            year: 'numeric',
-                            hour: 'numeric',
-                            minute: '2-digit',
-                            hour12: true,
-                          })}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Duration */}
-                    <div className="org-meet-info-row">
-                      <div className="org-meet-info-icon-wrap">
-                        <Clock size={16} />
-                      </div>
-                      <div>
-                        <div className="org-meet-info-label">Duration</div>
-                        <div className="org-meet-info-val tabular-nums">
-                          {selectedMeeting.expected_duration_minutes || 30} minutes
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Participants */}
-                    <div className="org-meet-info-row">
-                      <div className="org-meet-info-icon-wrap">
-                        <Users size={16} />
-                      </div>
-                      <div>
-                        <div className="org-meet-info-label">Participants</div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                          {selectedSpeakers.length === 0 ? (
-                            <span style={{ fontSize: '13px', color: '#94A3B8' }}>No recorded speakers</span>
-                          ) : (
-                            <>
-                              <div className="org-avatar-stack">
-                                {selectedSpeakers.slice(0, 4).map((speaker, sIdx) => {
-                                  const colors = AVATAR_PALETTES[sIdx % AVATAR_PALETTES.length];
-                                  return (
-                                    <div
-                                      key={speaker + sIdx}
-                                      className="org-avatar-stack-item"
-                                      style={{ backgroundColor: colors.text }}
-                                      title={speaker}
-                                    >
-                                      {speaker[0]?.toUpperCase() || 'U'}
-                                    </div>
-                                  );
-                                })}
-                                {selectedSpeakers.length > 4 && (
-                                  <div className="org-avatar-stack-more">
-                                    +{selectedSpeakers.length - 4}
-                                  </div>
-                                )}
-                              </div>
-                              <button
-                                type="button"
-                                style={{
-                                  background: 'none',
-                                  border: 'none',
-                                  color: '#0066FF',
-                                  fontSize: '12px',
-                                  fontWeight: 600,
-                                  cursor: 'pointer',
-                                }}
-                                onClick={() => setSelectedTab('participants')}
-                              >
-                                View all ({selectedSpeakers.length})
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Visibility */}
-                    <div className="org-meet-info-row">
-                      <div className="org-meet-info-icon-wrap">
-                        <Shield size={16} />
-                      </div>
-                      <div>
-                        <div className="org-meet-info-label">Visibility</div>
-                        <div style={{ marginTop: '2px' }}>
-                          <span
-                            className={`org-vis-badge ${(selectedMeeting.visibility || 'organisation').toLowerCase()}`}
-                          >
-                            {selectedMeeting.visibility || 'Organisation'}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: '11.5px', color: '#64748B', marginTop: '2px' }}>
-                          Visible to organisation members
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Owner */}
-                    <div className="org-meet-info-row">
-                      <div className="org-meet-info-icon-wrap">
-                        <User size={16} />
-                      </div>
-                      <div>
-                        <div className="org-meet-info-label">Owner</div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                          <div
-                            style={{
-                              width: '26px',
-                              height: '26px',
-                              borderRadius: '50%',
-                              backgroundColor: '#DBEAFE',
-                              color: '#1E40AF',
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}
-                          >
-                            {getInitials(
-                              memberById.get(selectedMeeting.owner_id)?.display_name || 'Harsh Vardhan'
-                            )}
-                          </div>
-                          <span style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A' }}>
-                            {memberById.get(selectedMeeting.owner_id)?.display_name ||
-                              (selectedMeeting.owner_id ? 'Member' : 'Harsh Vardhan')}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB 2: TRANSCRIPT */}
-                {selectedTab === 'transcript' && (
-                  <div style={{ maxHeight: '280px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {selectedTurns.length === 0 ? (
-                      <div style={{ padding: '24px 0', textAlign: 'center', color: '#94A3B8', fontSize: '12.5px' }}>
-                        No transcript recorded for this session.
-                      </div>
-                    ) : (
-                      selectedTurns.map((turn, tIdx) => (
-                        <div
-                          key={turn.id || tIdx}
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '8px',
-                            backgroundColor: '#F8FAFC',
-                            border: '1px solid #F1F5F9',
-                            fontSize: '12px',
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
-                            <span style={{ fontWeight: 600, color: '#0066FF' }}>{turn.speaker || 'Speaker'}</span>
-                            <span style={{ fontSize: '11px', color: '#94A3B8' }} className="tabular-nums">
-                              {turn.start_time !== undefined ? `${Math.floor(turn.start_time / 60)}:${String(Math.floor(turn.start_time % 60)).padStart(2, '0')}` : ''}
-                            </span>
-                          </div>
-                          <div style={{ color: '#334155', lineHeight: 1.4 }}>{turn.text}</div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-
-                {/* TAB 3: ACTION ITEMS */}
-                {selectedTab === 'actions' && (
-                  <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
-                    {(!selectedMom || !Array.isArray(selectedMom.action_items) || selectedMom.action_items.length === 0) ? (
-                      <div style={{ padding: '24px 0', textAlign: 'center', color: '#94A3B8', fontSize: '12.5px' }}>
-                        No action items extracted for this meeting.
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {selectedMom.action_items.map((item, idx) => (
-                          <div
-                            key={idx}
-                            style={{
-                              padding: '8px 10px',
-                              borderRadius: '8px',
-                              backgroundColor: '#F8FAFC',
-                              border: '1px solid #E2E8F0',
-                              fontSize: '12.5px',
-                              display: 'flex',
-                              alignItems: 'flex-start',
-                              gap: '8px',
-                            }}
-                          >
-                            <span style={{ color: '#0066FF', marginTop: '2px' }}>&bull;</span>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ color: '#0F172A', fontWeight: 500 }}>{item.task || item.description || JSON.stringify(item)}</div>
-                              {item.owner && (
-                                <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>
-                                  Assigned to: {item.owner} {item.due && `• Due: ${item.due}`}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* TAB 4: PARTICIPANTS */}
-                {selectedTab === 'participants' && (
-                  <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
-                    {selectedSpeakers.length === 0 ? (
-                      <div style={{ padding: '24px 0', textAlign: 'center', color: '#94A3B8', fontSize: '12.5px' }}>
-                        No participants registered.
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {selectedSpeakers.map((spk, idx) => {
-                          const colors = AVATAR_PALETTES[idx % AVATAR_PALETTES.length];
-                          return (
-                            <div
-                              key={spk + idx}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '10px',
-                                padding: '6px 8px',
-                                borderRadius: '6px',
-                                backgroundColor: '#F8FAFC',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  width: '28px',
-                                  height: '28px',
-                                  borderRadius: '50%',
-                                  backgroundColor: colors.bg,
-                                  color: colors.text,
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                }}
-                              >
-                                {spk[0]?.toUpperCase() || 'U'}
-                              </div>
-                              <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A' }}>{spk}</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="org-meet-detail-card" style={{ textAlign: 'center', padding: '40px 20px', color: '#94A3B8' }}>
-                Select a meeting from the list to preview details.
-              </div>
-            )}
-
-            {/* Quick Actions Card */}
-            {selectedMeeting && (
-              <div className="org-panel-card" style={{ padding: '18px 20px' }}>
-                <div className="org-panel-title" style={{ marginBottom: '12px' }}>
-                  Quick Actions
-                </div>
-
-                <Link
-                  href={`/meetings/${selectedMeeting.id}`}
-                  className="org-meet-btn-primary"
-                >
-                  <span>Open Meeting</span>
-                </Link>
-
-                <div className="org-meet-quick-grid">
-                  {/* Download Transcript */}
-                  <button
-                    type="button"
-                    className="org-meet-quick-btn"
-                    onClick={() => handleDownloadTranscript(selectedMeeting)}
-                  >
-                    <Download size={14} color="#0066FF" />
-                    <span>Download Transcript</span>
-                  </button>
-
-                  {/* View Recording */}
-                  <Link
-                    href={`/meetings/${selectedMeeting.id}`}
-                    className="org-meet-quick-btn"
-                    style={{ textDecoration: 'none' }}
-                  >
-                    <Play size={14} color="#0066FF" />
-                    <span>View Recording</span>
-                  </Link>
-
-                  {/* Share Meeting */}
-                  <button
-                    type="button"
-                    className="org-meet-quick-btn"
-                    onClick={() => handleShareMeeting(selectedMeeting)}
-                  >
-                    {copiedLink ? <Check size={14} color="#16A34A" /> : <Share2 size={14} color="#0066FF" />}
-                    <span>{copiedLink ? 'Copied Link!' : 'Share Meeting'}</span>
-                  </button>
-
-                  {/* More Actions */}
-                  <Link
-                    href={`/meetings/${selectedMeeting.id}`}
-                    className="org-meet-quick-btn"
-                    style={{ textDecoration: 'none' }}
-                  >
-                    <MoreHorizontal size={14} color="#64748B" />
-                    <span>More Actions</span>
-                  </Link>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </OrganisationPage>
-
-      {/* Add Meeting Modal */}
-      {isModalOpen && (
-        <AddMeetingModal
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          onMeetingAdded={() => {
-            setIsModalOpen(false);
-            loadData();
-          }}
-        />
-      )}
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ pieces */
+
+function Th({ label, sortKey, current, dir, onSort }) {
+  const active = current === sortKey;
+  return (
+    <th className="sortable" onClick={() => onSort(sortKey)} aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <span className="org-mt-th-inner">
+        {label}
+        <span className={`org-mt-sort ${active ? 'on' : ''}`} aria-hidden="true">
+          <svg width="8" height="11" viewBox="0 0 8 11" fill="none">
+            <path d="M4 0.5 L7 4 H1 Z" fill="currentColor" opacity={active && dir === 'asc' ? 1 : 0.45} />
+            <path d="M4 10.5 L1 7 H7 Z" fill="currentColor" opacity={active && dir === 'desc' ? 1 : 0.45} />
+          </svg>
+        </span>
+      </span>
+    </th>
+  );
+}
+
+function MiniStat({ icon, value, delta, label }) {
+  const sign = delta >= 0 ? '+' : '';
+  return (
+    <div className="org-mt-stat">
+      <div className="org-mt-stat-top">
+        <span className="org-mt-stat-icon">{icon}</span>
+        <span className="org-mt-stat-value tabular-nums">{value}</span>
+        <span className="org-mt-stat-delta">
+          <TrendingUp size={9} strokeWidth={2.8} aria-hidden="true" />
+          {sign}
+          {delta}%
+        </span>
+      </div>
+      <span className="org-mt-stat-label">{label}</span>
+    </div>
+  );
+}
+
+function SelectedSummary({ meeting, speakers, actionItems, onClose }) {
+  if (!meeting) return null;
+  const stamp = meeting.started_at || meeting.scheduled_start || meeting.created_at;
+  const { label } = statusMeta(meeting);
+  const team = getTeam(meeting.title);
+
+  return (
+    <div>
+      <div className="org-mt-card-head" style={{ marginBottom: 14 }}>
+        <span className="org-mt-card-title" style={{ fontSize: 15 }}>
+          {meeting.title || 'Untitled Meeting'}
+        </span>
+        <Link href={`/meetings/${meeting.id}`} className="org-mt-link">
+          Open <ArrowRight size={12} strokeWidth={2.4} aria-hidden="true" />
+        </Link>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <SummaryRow icon={<Calendar size={14} />} label="Date & Time" value={stamp ? new Date(stamp).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—'} />
+        <SummaryRow icon={<Clock size={14} />} label="Duration" value={formatDuration(meetingMinutes(meeting))} />
+        <SummaryRow
+          icon={<ListChecks size={14} />}
+          label="Team"
+          value={team}
+          valueColor={teamColor(team)}
+        />
+        <SummaryRow icon={<Users size={14} />} label="Participants" value={speakers.length || '—'} />
+        <SummaryRow icon={<FileText size={14} />} label="Action Items" value={actionItems} />
+        <SummaryRow icon={<Check size={14} />} label="Status" value={label} />
+      </div>
+    </div>
+  );
+}
+
+function SummaryRow({ icon, label, value, valueColor }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <span style={{ color: '#94A3B8', display: 'inline-flex', flexShrink: 0 }}>{icon}</span>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: '#64748B' }}>{label}</span>
+      <span
+        style={{
+          fontSize: 12.5,
+          fontWeight: 600,
+          color: valueColor || '#0F172A',
+          textAlign: 'right',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {value}
+      </span>
+    </div>
   );
 }

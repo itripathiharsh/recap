@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
@@ -37,6 +37,9 @@ import {
   Timer,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
+import { applyWorkspaceScope, useWorkspace } from '../../../lib/workspace';
+import { formatDateTime, formatDuration } from '../../../lib/format';
+import { speakingShare, isPlaceholderSpeaker } from '../../../lib/metrics';
 import MeetingHeroArt from '../../../components/MeetingHeroArt';
 
 // Color ramp for participants
@@ -52,6 +55,7 @@ const SPEAKER_PALETTE = [
 export default function MeetingDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const { activeOrgId, loading: workspacesLoading } = useWorkspace();
   const meetingId = params?.id;
 
   const [meeting, setMeeting] = useState(null);
@@ -59,6 +63,7 @@ export default function MeetingDetailPage() {
   const [speakerTurns, setSpeakerTurns] = useState([]);
   const [mom, setMom] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [outOfScope, setOutOfScope] = useState(false);
 
   // Tabs & Views
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'transcript' | 'speakers' | 'audio' | 'files'
@@ -98,13 +103,27 @@ export default function MeetingDetailPage() {
     if (!meetingId) return;
     try {
       if (isInitial) setLoading(true);
-      const { data: meetData, error: meetError } = await supabase
-        .from('meetings')
-        .select('*')
-        .eq('id', meetingId)
-        .single();
-      if (meetError) throw meetError;
+      // Scope by workspace: a meeting id from the other workspace must not resolve.
+      const { data: meetData, error: meetError } = await applyWorkspaceScope(
+        supabase.from('meetings').select('*').eq('id', meetingId).single(),
+        activeOrgId
+      );
+      if (meetError) {
+        // PGRST116 = zero rows matched. That means the meeting exists but is not
+        // in the active workspace, so drop the stale render instead of leaking it.
+        const scopeMiss = meetError.code === 'PGRST116' || /0 rows/i.test(meetError.message || '');
+        if (scopeMiss) {
+          setOutOfScope(true);
+          setMeeting(null);
+          setTranscript(null);
+          setSpeakerTurns([]);
+          setMom(null);
+          return;
+        }
+        throw meetError;
+      }
       setMeeting(meetData);
+      setOutOfScope(false);
 
       const { data: transData } = await supabase
         .from('transcripts')
@@ -128,12 +147,17 @@ export default function MeetingDetailPage() {
       if (momData && momData.length > 0) setMom(momData[0]);
     } catch (err) {
       console.error('Error fetching meeting details:', err);
+      if (isInitial) setLoading(false);
     } finally {
       if (isInitial) setLoading(false);
     }
   };
 
   useEffect(() => {
+    // Wait for the workspace to resolve, otherwise the first fetch would run in
+    // personal scope and briefly render another workspace's meeting.
+    if (workspacesLoading) return;
+    setOutOfScope(false);
     fetchDetails(true);
 
     // Auto-refresh every 4s if meeting is in progress or not finished
@@ -142,7 +166,7 @@ export default function MeetingDetailPage() {
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [meetingId]);
+  }, [meetingId, activeOrgId, workspacesLoading]);
 
   // Rename speaker across all turns
   const handleRenameSpeaker = async (oldName) => {
@@ -205,7 +229,10 @@ export default function MeetingDetailPage() {
       await supabase.from('transcripts').delete().eq('meeting_id', meetingId);
       await supabase.from('jobs').delete().eq('meeting_id', meetingId);
       await supabase.from('system_events').delete().eq('meeting_id', meetingId);
-      await supabase.from('meetings').delete().eq('id', meetingId);
+      await applyWorkspaceScope(
+        supabase.from('meetings').delete().eq('id', meetingId),
+        activeOrgId
+      );
 
       router.push('/meetings');
     } catch (err) {
@@ -263,8 +290,13 @@ export default function MeetingDetailPage() {
     if (!speakerTurns || speakerTurns.length === 0) return [];
     const map = {};
     speakerTurns.forEach((turn) => {
-      const spk = turn.speaker || 'Unknown';
-      const dur = Math.max(0, (turn.end_time || 0) - (turn.start_time || 0));
+      const spk = (turn.speaker || '').trim();
+      // Placeholder diarization labels are not people; showing them as
+      // participants with a 0% share made the card look broken.
+      if (!spk || isPlaceholderSpeaker(spk)) return;
+      const start = Number(turn.start_time);
+      const end = Number(turn.end_time);
+      const dur = Number.isFinite(start) && Number.isFinite(end) && end > start ? end - start : 0;
       if (!map[spk]) {
         map[spk] = { name: spk, totalSecs: 0, turnsCount: 0 };
       }
@@ -272,39 +304,48 @@ export default function MeetingDetailPage() {
       map[spk].turnsCount += 1;
     });
 
-    const totalSecs = Object.values(map).reduce((sum, item) => sum + item.totalSecs, 0) || 1;
-    return Object.values(map)
-      .map((item, idx) => {
-        const pct = Math.round((item.totalSecs / totalSecs) * 100);
-        return {
-          ...item,
-          percentage: pct,
-          minutes: Math.max(1, Math.round(item.totalSecs / 60)),
-          color: SPEAKER_PALETTE[idx % SPEAKER_PALETTE.length],
-        };
-      })
-      .sort((a, b) => b.totalSecs - a.totalSecs);
+    const rows = Object.values(map);
+    const totalSecs = rows.reduce((sum, item) => sum + item.totalSecs, 0);
+
+    // If no turn carries a usable duration there is NO speaking-time data.
+    // Publishing a percentage anyway produced cards where the most active
+    // speaker showed "5 turns, 0%" next to someone with 2 turns at 31%.
+    const hasDurations = totalSecs > 0;
+
+    return rows
+      .map((item, idx) => ({
+        ...item,
+        percentage: hasDurations ? Math.round((item.totalSecs / totalSecs) * 100) : null,
+        minutes: hasDurations ? Math.max(1, Math.round(item.totalSecs / 60)) : null,
+        color: SPEAKER_PALETTE[idx % SPEAKER_PALETTE.length],
+      }))
+      .sort((a, b) => b.totalSecs - a.totalSecs || b.turnsCount - a.turnsCount || a.name.localeCompare(b.name));
   }, [speakerTurns]);
+
+  const hasSpeakingDurations = speakerStats.some((s) => s.totalSecs > 0);
 
   // Total speaking time in seconds
   const totalSpeakingSecs = useMemo(() => {
     return speakerStats.reduce((sum, s) => sum + s.totalSecs, 0);
   }, [speakerStats]);
 
-  // Actual meeting duration in minutes
+  // Actual meeting duration in minutes.
+  // Measured from real timestamps only. `expected_duration_minutes` is a *plan*,
+  // not a measurement, and the previous `return 30` made every meeting with no
+  // timing data read as "30 min" regardless of its real length.
   const totalDurationMinutes = useMemo(() => {
     if (meeting?.started_at && meeting?.ended_at) {
       const diff = Math.round((new Date(meeting.ended_at) - new Date(meeting.started_at)) / 60000);
       if (diff > 0) return diff;
     }
-    if (meeting?.expected_duration_minutes) {
-      return meeting.expected_duration_minutes;
+    if (meeting?.scheduled_start && meeting?.scheduled_end) {
+      const diff = Math.round(
+        (new Date(meeting.scheduled_end) - new Date(meeting.scheduled_start)) / 60000
+      );
+      if (diff > 0) return diff;
     }
-    if (duration > 0) {
-      return Math.max(1, Math.round(duration / 60));
-    }
-    return 30;
-  }, [meeting, duration]);
+    return null;
+  }, [meeting]);
 
   // Derived real metrics
   const participantsCount = speakerStats.length > 0 ? speakerStats.length : meeting?.status === 'completed' ? 1 : 0;
@@ -376,8 +417,22 @@ export default function MeetingDetailPage() {
     return (
       <div style={{ padding: '60px 0', textAlign: 'center' }}>
         <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#0F172A', marginBottom: '8px' }}>
-          Meeting not found
+          {outOfScope ? 'Not in this workspace' : 'Meeting not found'}
         </h2>
+        <p
+          style={{
+            fontSize: '13px',
+            color: '#64748B',
+            marginBottom: '16px',
+            maxWidth: '420px',
+            margin: '0 auto 16px',
+            textWrap: 'pretty',
+          }}
+        >
+          {outOfScope
+            ? 'This meeting belongs to a different workspace. Switch workspaces to open it.'
+            : 'The meeting may have been deleted, or the link is incorrect.'}
+        </p>
         <Link href="/meetings" className="md-btn-outline" style={{ display: 'inline-flex' }}>
           Back to Meetings
         </Link>
@@ -443,22 +498,21 @@ export default function MeetingDetailPage() {
       {/* Header Row: Title, Metadata, Actions */}
       <div className="md-header-row">
         <div className="md-header-info">
-          <h1 className="md-header-title">{meeting.title || 'Untitled Meeting'}</h1>
+          <h1 className="md-header-title">{meeting.title || 'Untitled meeting'}</h1>
 
           <div className="md-header-meta">
             <span className="tabular-nums">
-              {new Date(meeting.scheduled_start || meeting.created_at).toLocaleString([], {
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
+              {formatDateTime(meeting.scheduled_start || meeting.started_at || meeting.created_at) || (
+                <span style={{ color: '#94A3B8' }}>No date recorded</span>
+              )}
             </span>
-            <span className="bullet">&bull;</span>
-            <span className="tabular-nums">{totalDurationMinutes} min</span>
-            <span className="bullet">&bull;</span>
-            <span className={`md-status-pill ${meeting.status}`}>
+            {totalDurationMinutes != null && (
+              <>
+                <span className="bullet">&bull;</span>
+                <span className="tabular-nums">{formatDuration(totalDurationMinutes)}</span>
+              </>
+            )}
+            <span className="bullet">&bull;</span>            <span className={`md-status-pill ${meeting.status}`}>
               <span
                 style={{
                   width: '6px',
@@ -824,7 +878,9 @@ export default function MeetingDetailPage() {
                     <div className="md-hero-row">
                       <Timer size={13} color="#64748B" style={{ flexShrink: 0 }} />
                       <span className="md-hero-label">Duration:</span>
-                      <span className="md-hero-value tabular-nums">{totalDurationMinutes} min</span>
+                      <span className="md-hero-value tabular-nums">
+                        {formatDuration(totalDurationMinutes) || 'Not recorded'}
+                      </span>
                     </div>
 
                     <div className="md-hero-row">
@@ -965,6 +1021,7 @@ export default function MeetingDetailPage() {
 
                       {/* Dynamic Segments */}
                       {speakerStats.map((spk, idx) => {
+                        if (spk.percentage == null) return null;
                         const strokeLength = (spk.percentage / 100) * donutCircumference;
                         const strokeOffset = (cumulativePercent / 100) * donutCircumference;
                         cumulativePercent += spk.percentage;
@@ -985,9 +1042,10 @@ export default function MeetingDetailPage() {
                         );
                       })}
                     </svg>
-
                     <div className="md-donut-center">
-                      <div className="md-donut-duration tabular-nums">{totalDurationMinutes} min</div>
+                      <div className="md-donut-duration tabular-nums">
+                        {formatDuration(totalDurationMinutes) || '—'}
+                      </div>
                       <div className="md-donut-sub">Total duration</div>
                     </div>
                   </div>
@@ -1005,17 +1063,21 @@ export default function MeetingDetailPage() {
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <span className="md-speaker-stat tabular-nums">
-                            {spk.minutes} min ({spk.percentage}%)
+                            {hasSpeakingDurations
+                              ? `${spk.minutes} min (${spk.percentage}%)`
+                              : `${spk.turnsCount} turn${spk.turnsCount === 1 ? '' : 's'}`}
                           </span>
-                          <div className="md-bar-track">
-                            <div
-                              className="md-bar-fill"
-                              style={{
-                                width: `${spk.percentage}%`,
-                                backgroundColor: spk.color.fill,
-                              }}
-                            />
-                          </div>
+                          {hasSpeakingDurations && (
+                            <div className="md-bar-track">
+                              <div
+                                className="md-bar-fill"
+                                style={{
+                                  width: `${spk.percentage}%`,
+                                  backgroundColor: spk.color.fill,
+                                }}
+                              />
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1689,22 +1751,28 @@ export default function MeetingDetailPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A' }} className="tabular-nums">
-                        {spk.minutes} min
+                        {hasSpeakingDurations ? `${spk.minutes} min` : `${spk.turnsCount} turns`}
                       </div>
-                      <div style={{ fontSize: '11px', color: '#64748B' }}>{spk.percentage}% of conversation</div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>
+                        {hasSpeakingDurations
+                          ? `${spk.percentage}% of conversation`
+                          : 'speaking time not recorded'}
+                      </div>
                     </div>
 
-                    <div style={{ width: '120px' }}>
-                      <div className="md-bar-track">
-                        <div
-                          className="md-bar-fill"
-                          style={{
-                            width: `${spk.percentage}%`,
-                            backgroundColor: spk.color.fill,
-                          }}
-                        />
+                    {hasSpeakingDurations && (
+                      <div style={{ width: '120px' }}>
+                        <div className="md-bar-track">
+                          <div
+                            className="md-bar-fill"
+                            style={{
+                              width: `${spk.percentage}%`,
+                              backgroundColor: spk.color.fill,
+                            }}
+                          />
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               ))}

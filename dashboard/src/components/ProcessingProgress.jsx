@@ -1,294 +1,351 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Mic,
-  Radio,
-  FileText,
-  Users,
-  Sparkles,
   CheckCircle2,
   Clock,
   Loader2,
+  AlertCircle,
+  Mic,
+  FileText,
+  Users,
+  Sparkles,
+  Send,
+  Radio,
 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { applyWorkspaceScope, useWorkspace } from '../lib/workspace';
+
+/**
+ * The six stages the worker actually reports, in pipeline order. The keys must
+ * match the `stage` values passed to db_record_pipeline_stage() in src/worker.py.
+ */
+const STAGES = [
+  { key: 'audio_capture', label: 'Audio Capture', icon: Mic },
+  { key: 'transcription', label: 'Transcription', icon: FileText },
+  { key: 'voice_diarization', label: 'Voice Diarization', icon: Users },
+  { key: 'speaker_identification', label: 'Speaker Identification', icon: Users },
+  { key: 'executive_mom', label: 'Executive MOM', icon: Sparkles },
+  { key: 'delivery', label: 'Delivery', icon: Send },
+];
+
+const STAGE_KEYS = STAGES.map((s) => s.key);
+
+function clock(totalSeconds) {
+  if (totalSeconds == null) return null;
+  const s = Math.max(0, Math.round(totalSeconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return rem ? `${m}m ${rem}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+/**
+ * Turn raw `pipeline_stage` metadata objects into per-stage state + real
+ * durations. Only timestamps the worker actually wrote are used.
+ */
+function readStages(rows, nowMs) {
+  const byKey = new Map();
+  for (const key of STAGE_KEYS) {
+    byKey.set(key, { key, startedAt: null, endedAt: null, failed: false, detail: null });
+  }
+
+  for (const meta of rows || []) {
+    if (!meta) continue;
+    const stage = byKey.get(meta.stage);
+    if (!stage) continue;
+    const at = Date.parse(meta.at);
+    if (Number.isNaN(at)) continue;
+    if (meta.state === 'started') {
+      if (stage.startedAt == null || at < stage.startedAt) stage.startedAt = at;
+    } else if (meta.state === 'completed') {
+      if (stage.endedAt == null || at > stage.endedAt) stage.endedAt = at;
+    } else if (meta.state === 'failed') {
+      stage.failed = true;
+      stage.detail = meta.detail || null;
+      if (stage.endedAt == null) stage.endedAt = at;
+    }
+  }
+
+  return STAGE_KEYS.map((key) => {
+    const s = byKey.get(key);
+    const state = !s.startedAt
+      ? 'pending'
+      : s.endedAt
+        ? s.failed
+          ? 'failed'
+          : 'done'
+        : 'active';
+    return {
+      ...s,
+      state,
+      durationMs:
+        s.startedAt != null && s.endedAt != null ? Math.max(0, s.endedAt - s.startedAt) : null,
+      liveMs: s.startedAt != null && s.endedAt == null ? Math.max(0, nowMs - s.startedAt) : null,
+    };
+  });
+}
 
 export default function ProcessingProgress({ meeting }) {
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [estimatedRemaining, setEstimatedRemaining] = useState(65);
+  const { activeOrgId } = useWorkspace();
+  const status = meeting?.status;
 
-  const status = meeting?.status || 'processing';
+  const [rows, setRows] = useState(null); // null = not loaded yet
+  const [averages, setAverages] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
+  const mounted = useRef(true);
 
-  // Timer for recording or processing
+  useEffect(() => () => { mounted.current = false; }, []);
+
+  /* ------------------------------------------------- live "now" heartbeat */
   useEffect(() => {
-    if (status !== 'recording' && status !== 'processing' && status !== 'joining') {
-      return;
+    if (status !== 'processing') return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [status]);
+
+  /* --------------------------------------- real stage rows for this meeting */
+  useEffect(() => {
+    if (!meeting?.id) return;
+    let cancelled = false;
+
+    async function load() {
+      const { data, error } = await supabase
+        .from('system_events')
+        .select('metadata')
+        .eq('meeting_id', meeting.id)
+        .eq('event_type', 'pipeline_stage')
+        .order('created_at', { ascending: true });
+
+      if (cancelled) return;
+      if (error) {
+        setRows([]);
+        return;
+      }
+      setRows((data || []).map((r) => r.metadata).filter(Boolean));
     }
 
-    const startTime = meeting?.started_at ? new Date(meeting.started_at).getTime() : Date.now();
+    load();
+    // Real-time keeps the active stage timer honest without polling the DB hard.
+    const channel = supabase
+      .channel(`pipeline-stage-${meeting.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'system_events', filter: `meeting_id=eq.${meeting.id}` },
+        () => load()
+      )
+      .subscribe();
 
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const elapsed = Math.max(0, Math.floor((now - startTime) / 1000));
-      setElapsedSeconds(elapsed);
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [meeting?.id]);
 
-      if (status === 'processing') {
-        // Average pipeline takes ~75-90 seconds
-        const estTotal = 80;
-        const rem = Math.max(5, estTotal - (elapsed % estTotal));
-        setEstimatedRemaining(rem);
+  /* ------------------- average real duration per stage, from past runs only */
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let cancelled = false;
+
+    async function loadAverages() {
+      const { data: pastMeetings } = await applyWorkspaceScope(
+        supabase.from('meetings').select('id').eq('status', 'completed').limit(20),
+        activeOrgId
+      );
+      const ids = (pastMeetings || []).map((m) => m.id);
+      if (ids.length === 0) {
+        if (!cancelled) setAverages({});
+        return;
       }
-    }, 1000);
 
-    return () => clearInterval(interval);
-  }, [status, meeting?.started_at]);
+      const { data: pastEvents } = await supabase
+        .from('system_events')
+        .select('metadata, meeting_id')
+        .eq('event_type', 'pipeline_stage')
+        .in('meeting_id', ids)
+        .limit(2000);
 
-  const formatTimer = (secs) => {
-    const m = Math.floor(secs / 60).toString().padStart(2, '0');
-    const s = (secs % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
-  };
+      if (cancelled) return;
 
-  if (status === 'recording') {
+      const starts = new Map(); // `${meeting}:${stage}` -> ms
+      const totals = new Map(); // stage -> [ms]
+      for (const row of pastEvents || []) {
+        const meta = row?.metadata || {};
+        if (!STAGE_KEYS.includes(meta.stage)) continue;
+        const at = Date.parse(meta.at);
+        if (Number.isNaN(at)) continue;
+        const key = `${row.meeting_id}:${meta.stage}`;
+        if (meta.state === 'started') {
+          starts.set(key, at);
+        } else if (meta.state === 'completed' || meta.state === 'failed') {
+          const s = starts.get(key);
+          if (s != null) {
+            if (!totals.has(meta.stage)) totals.set(meta.stage, []);
+            totals.get(meta.stage).push(Math.max(0, at - s));
+          }
+        }
+      }
+
+      const avg = {};
+      for (const [stage, list] of totals) {
+        if (list.length === 0) continue;
+        avg[stage] = list.reduce((a, b) => a + b, 0) / list.length;
+      }
+      setAverages(avg);
+    }
+
+    loadAverages();
+    return () => { cancelled = true; };
+  }, [activeOrgId]);
+
+  /* ------------------------------------------------------------- derived */
+
+  const stages = useMemo(() => readStages(rows, now), [rows, now]);
+
+  const activeStage = stages.find((s) => s.state === 'active') || null;
+  const doneCount = stages.filter((s) => s.state === 'done' || s.state === 'failed').length;
+
+  // Real progress: completed stages over total. No animation-driven guesswork.
+  const progressPct = Math.round((doneCount / STAGES.length) * 100);
+
+  const hasData = rows !== null && stages.some((s) => s.startedAt != null);
+
+  /* Real ETA: the current stage's measured average, plus the measured averages
+     of every stage still ahead. Null when we have no history to base it on. */
+  const remainingMs = useMemo(() => {
+    if (!activeStage || !averages) return null;
+    const idx = STAGES.findIndex((s) => s.key === activeStage.key);
+    let total = 0;
+    for (let i = idx; i < STAGES.length; i += 1) {
+      const avg = averages[STAGES[i].key];
+      if (avg == null) return null; // incomplete history -> no honest estimate
+      total += avg;
+    }
+    return Math.max(0, total - (activeStage.liveMs || 0));
+  }, [activeStage, averages]);
+
+  /* ----------------------------------------------------------- recording */
+  if (status === 'recording' || status === 'joining') {
     return (
-      <div
-        style={{
-          backgroundColor: '#FEF2F2',
-          border: '1px solid #FECACA',
-          borderRadius: '12px',
-          padding: '16px 20px',
-          marginBottom: '20px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '16px',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div
-            style={{
-              position: 'relative',
-              width: '12px',
-              height: '12px',
-              borderRadius: '50%',
-              backgroundColor: '#EF4444',
-            }}
-          >
-            <div
-              style={{
-                position: 'absolute',
-                top: '-4px',
-                left: '-4px',
-                width: '20px',
-                height: '20px',
-                borderRadius: '50%',
-                backgroundColor: 'rgba(239, 68, 68, 0.4)',
-                animation: 'ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite',
-              }}
-            />
+      <div className="pp-rec">
+        <div className="pp-rec-pulse" aria-hidden="true" />
+        <div className="pp-rec-text">
+          <div className="pp-rec-title">
+            {status === 'joining' ? 'Joining Meeting' : 'Live Recording In Progress'}
           </div>
-          <div>
-            <div style={{ fontSize: '13.5px', fontWeight: 700, color: '#991B1B' }}>
-              Live Recording In Progress
-            </div>
-            <div style={{ fontSize: '12px', color: '#B91C1C', marginTop: '2px' }}>
-              recap bot is inside the call capturing high-fidelity audio and attendee logs.
-            </div>
+          <div className="pp-rec-sub">
+            {status === 'joining'
+              ? 'The recap bot is joining the call.'
+              : 'The recap bot is inside the call capturing audio.'}
           </div>
-        </div>
-
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            backgroundColor: '#FFFFFF',
-            padding: '6px 14px',
-            borderRadius: '20px',
-            border: '1px solid #FCA5A5',
-            fontSize: '13px',
-            fontWeight: 700,
-            color: '#DC2626',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          <Radio size={15} className="animate-pulse" />
-          <span>{formatTimer(elapsedSeconds)}</span>
         </div>
       </div>
     );
   }
 
-  if (status === 'processing') {
-    // Determine current progress percentage and stage
-    let progressPct = 40;
-    let activeStage = 'Transcribing Dialogue';
+  // Only a meeting that finished recording and is mid-pipeline gets the panel.
+  if (status !== 'processing') return null;
 
-    if (elapsedSeconds < 25) {
-      progressPct = 35;
-      activeStage = 'Transcribing Dialogue (Groq Whisper / Gemini)';
-    } else if (elapsedSeconds < 55) {
-      progressPct = 65;
-      activeStage = 'Voice Diarization (pyannote.audio)';
-    } else if (elapsedSeconds < 75) {
-      progressPct = 85;
-      activeStage = 'Resolving Speaker Identities';
-    } else {
-      progressPct = 95;
-      activeStage = 'Generating Executive MOM & Action Items';
-    }
-
-    const stages = [
-      { id: 1, label: 'Audio Capture', done: true },
-      { id: 2, label: 'Transcription', done: progressPct >= 50, active: progressPct < 50 },
-      { id: 3, label: 'Voice Diarization', done: progressPct >= 75, active: progressPct >= 50 && progressPct < 75 },
-      { id: 4, label: 'Speaker Identification', done: progressPct >= 90, active: progressPct >= 75 && progressPct < 90 },
-      { id: 5, label: 'Executive MOM', done: false, active: progressPct >= 90 },
-    ];
-
-    return (
-      <div
-        style={{
-          backgroundColor: '#F8FAFC',
-          border: '1px solid #E2E8F0',
-          borderRadius: '14px',
-          padding: '20px',
-          marginBottom: '24px',
-          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.03)',
-        }}
-      >
-        {/* Header: Title, Stage & Time Estimate */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: '14px',
-            flexWrap: 'wrap',
-            gap: '12px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                backgroundColor: '#EFF6FF',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#0066FF',
-              }}
-            >
-              <Loader2 size={18} style={{ animation: 'spin 1.2s linear infinite' }} />
-            </div>
-            <div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: '#0F172A' }}>
-                Processing Meeting Intelligence
-              </div>
-              <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
-                Current Stage: <span style={{ color: '#0066FF', fontWeight: 600 }}>{activeStage}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Time Remaining Pill */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: '#EFF6FF',
-              border: '1px solid #DBEAFE',
-              padding: '5px 12px',
-              borderRadius: '20px',
-              fontSize: '12px',
-              fontWeight: 600,
-              color: '#1D4ED8',
-            }}
-          >
-            <Clock size={14} />
-            <span>~{estimatedRemaining}s remaining</span>
-          </div>
-        </div>
-
-        {/* Animated Progress Bar */}
-        <div
-          style={{
-            width: '100%',
-            height: '8px',
-            backgroundColor: '#E2E8F0',
-            borderRadius: '999px',
-            overflow: 'hidden',
-            marginBottom: '16px',
-          }}
-        >
-          <div
-            style={{
-              width: `${progressPct}%`,
-              height: '100%',
-              backgroundColor: '#0066FF',
-              borderRadius: '999px',
-              transition: 'width 600ms cubic-bezier(0.16, 1, 0.3, 1)',
-              backgroundImage: 'linear-gradient(45deg, rgba(255,255,255,0.2) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.2) 75%, transparent 75%, transparent)',
-              backgroundSize: '16px 16px',
-            }}
-          />
-        </div>
-
-        {/* 5-Stage Checklist Pill Grid */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
-            gap: '8px',
-          }}
-        >
-          {stages.map((st) => (
-            <div
-              key={st.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '11.5px',
-                padding: '6px 10px',
-                borderRadius: '8px',
-                backgroundColor: st.done
-                  ? '#ECFDF5'
-                  : st.active
-                  ? '#EFF6FF'
-                  : '#FFFFFF',
-                border: st.done
-                  ? '1px solid #A7F3D0'
-                  : st.active
-                  ? '1px solid #BFDBFE'
-                  : '1px solid #F1F5F9',
-                color: st.done
-                  ? '#065F46'
-                  : st.active
-                  ? '#1E40AF'
-                  : '#94A3B8',
-                fontWeight: st.done || st.active ? 600 : 500,
-              }}
-            >
-              {st.done ? (
-                <CheckCircle2 size={13} color="#10B981" />
-              ) : st.active ? (
-                <Loader2 size={13} color="#0066FF" style={{ animation: 'spin 1.5s linear infinite' }} />
-              ) : (
-                <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#CBD5E1', margin: '0 3px' }} />
-              )}
-              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {st.label}
+  return (
+    <div className="pp-card">
+      <div className="pp-head">
+        <div className="pp-head-left">
+          <span className="pp-head-icon" aria-hidden="true">
+            <Loader2 size={18} style={{ animation: 'spin 1.2s linear infinite' }} />
+          </span>
+          <div>
+            <div className="pp-title">Processing Meeting Intelligence</div>
+            <div className="pp-stage-line">
+              Current Stage:{' '}
+              <span className="pp-stage-name">
+                {activeStage
+                  ? STAGES.find((s) => s.key === activeStage.key).label
+                  : hasData
+                    ? 'Finishing up'
+                    : 'Waiting for the worker to report progress'}
               </span>
             </div>
-          ))}
+          </div>
         </div>
-      </div>
-    );
-  }
 
-  return null;
+        {activeStage?.liveMs != null && (
+          <span className="pill pill-live tabular-nums">
+            <Clock size={13} aria-hidden="true" />
+            {clock(activeStage.liveMs / 1000)} in this stage
+          </span>
+        )}
+        {remainingMs != null && (
+          <span className="pill pill-eta tabular-nums">
+            <Clock size={13} aria-hidden="true" />
+            ~{clock(remainingMs / 1000)} left
+          </span>
+        )}
+      </div>
+
+      {!hasData && (
+        <div className="pp-note">
+          <AlertCircle size={14} aria-hidden="true" />
+          <span>
+            This meeting is marked as processing, but the worker has not reported any stage
+            timings yet — so no stage times are shown rather than guessed ones.
+          </span>
+        </div>
+      )}
+
+      {hasData && remainingMs == null && (
+        <div className="pp-note">
+          <AlertCircle size={14} aria-hidden="true" />
+          <span>
+            No completed runs to compare against yet, so there is no honest time estimate. Stage
+            timings below are measured.
+          </span>
+        </div>
+      )}
+
+      <div
+        className="pp-bar"
+        role="progressbar"
+        aria-valuenow={progressPct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Pipeline progress"
+      >
+        <span className="pp-bar-fill" style={{ width: `${Math.max(progressPct, 2)}%` }} />
+      </div>
+
+      <div className="pp-stages">
+        {STAGES.map((stage) => {
+          const data = stages.find((s) => s.key === stage.key);
+          const state = data?.state || 'pending';
+          const Icon = stage.icon;
+          const timing =
+            state === 'done' || state === 'failed'
+              ? clock((data.durationMs || 0) / 1000)
+              : state === 'active'
+                ? clock((data.liveMs || 0) / 1000)
+                : null;
+
+          return (
+            <div key={stage.key} className={`pp-stage ${state}`} title={data?.detail || undefined}>
+              <span className="pp-stage-icon" aria-hidden="true">
+                {state === 'done' ? (
+                  <CheckCircle2 size={13} />
+                ) : state === 'failed' ? (
+                  <AlertCircle size={13} />
+                ) : state === 'active' ? (
+                  <Loader2 size={13} style={{ animation: 'spin 1.5s linear infinite' }} />
+                ) : (
+                  <Icon size={13} />
+                )}
+              </span>
+              <span className="pp-stage-label">{stage.label}</span>
+              {timing && <span className="pp-stage-time tabular-nums">{timing}</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }

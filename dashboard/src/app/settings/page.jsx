@@ -1,76 +1,43 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import {
-  Sliders,
-  User,
-  Video,
-  Mic,
-  Bell,
-  Terminal,
-  Database,
-  CheckCircle2,
-} from 'lucide-react';
+import { Sliders, User, Bell } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { applyWorkspaceScope, useWorkspace } from '../../lib/workspace';
 
 export default function SettingsPage() {
-  const { activeOrgId } = useWorkspace();
+  const { activeOrgId, session } = useWorkspace();
   const [activeSection, setActiveSection] = useState('general');
-  const [supabaseConnected, setSupabaseConnected] = useState(null);
-  const [dbStats, setDbStats] = useState({ meetings: 0, mom: 0 });
-  const [userProfile, setUserProfile] = useState({ name: '', email: '' });
+
+  // The signed-in identity comes from the session, which is authoritative.
+  // It used to be read from `public."User"` with `.limit(1)` and no filter,
+  // which displayed the first row in the table as "your" profile — and that
+  // table does not exist in this project at all.
+  const userProfile = session?.user || null;
 
   useEffect(() => {
+    // Workspace-scoped sanity probe. Failures are logged, never surfaced as
+    // infrastructure detail in the customer UI.
     async function testConnection() {
       try {
-        const { count: mCount, error: mErr } = await applyWorkspaceScope(
-          supabase.from('meetings').select('*', { count: 'exact', head: true }),
+        await applyWorkspaceScope(
+          supabase.from('meetings').select('id', { count: 'exact', head: true }),
           activeOrgId
         );
-
-        let momCount = 0;
-        const { data: scopedMeetings } = await applyWorkspaceScope(
-          supabase.from('meetings').select('id'),
-          activeOrgId
-        );
-        const scopedIds = (scopedMeetings || []).map((m) => m.id);
-        if (scopedIds.length > 0) {
-          const { count } = await supabase
-            .from('mom')
-            .select('*', { count: 'exact', head: true })
-            .in('meeting_id', scopedIds);
-          momCount = count || 0;
-        }
-
-        const { data: userData } = await supabase
-          .from('User')
-          .select('name, email')
-          .limit(1)
-          .maybeSingle();
-
-        if (userData?.name) {
-          setUserProfile({ name: userData.name, email: userData.email || '' });
-        }
-
-        if (mErr) throw mErr;
-        setSupabaseConnected(true);
-        setDbStats({ meetings: mCount || 0, mom: momCount || 0 });
       } catch (err) {
-        console.error('Supabase check error:', err);
-        setSupabaseConnected(false);
+        console.error('Workspace probe error:', err);
       }
     }
     testConnection();
   }, [activeOrgId]);
 
+  // System / Google Meet / Recording were removed from the customer build: they
+  // were read-only and exposed host paths, systemd commands, database vendor and
+  // model provider names. That belongs in internal tooling, not a customer UI.
   const sections = [
     { id: 'general', label: 'General', icon: Sliders },
     { id: 'account', label: 'Account', icon: User },
-    { id: 'google_meet', label: 'Google Meet', icon: Video },
-    { id: 'recording', label: 'Recording', icon: Mic },
     { id: 'notifications', label: 'Notifications', icon: Bell },
-    { id: 'system', label: 'System', icon: Terminal },
   ];
 
   return (
@@ -153,65 +120,21 @@ export default function SettingsPage() {
 
               <div className="form-group">
                 <label className="form-label">User Profile</label>
-                <input type="text" className="form-input" value={`${userProfile.name} (${userProfile.email})`} disabled />
+                <input
+                  type="text"
+                  className="form-input"
+                  value={
+                    userProfile
+                      ? `${userProfile.user_metadata?.full_name || userProfile.user_metadata?.name || 'Signed in'} (${userProfile.email})`
+                      : 'Not signed in'
+                  }
+                  disabled
+                />
               </div>
 
               <div className="form-group">
                 <label className="form-label">Authentication Mode</label>
-                <input type="text" className="form-input" value="Supabase Auth (Single-Tenant Session)" disabled />
-              </div>
-            </div>
-          )}
-
-          {/* Google Meet Section */}
-          {activeSection === 'google_meet' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <h2 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
-                Google Meet Bot Configuration
-              </h2>
-
-              <div className="form-group">
-                <label className="form-label">Bot Display Name</label>
-                <input type="text" className="form-input" value="Notetaker Bot (Recording)" disabled />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Initial Hardware State</label>
-                <input type="text" className="form-input" value="Microphone & Camera Muted" disabled />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Persistent Chrome Profile Path</label>
-                <input type="text" className="form-input" value="D:\meet recorder\.temp\chrome_profile" disabled />
-              </div>
-            </div>
-          )}
-
-          {/* Recording Section */}
-          {activeSection === 'recording' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <h2 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
-                Recording &amp; Retention Policy
-              </h2>
-
-              <div className="form-group">
-                <label className="form-label">Audio Retention Period</label>
-                <input type="text" className="form-input" value="7 days (automatically cleaned from local disk)" disabled />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Speech-to-Text Model</label>
-                <input type="text" className="form-input" value="Groq Whisper Large v3 (groq-whisper-large-v3) / faster-whisper" disabled />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Speaker Diarization Model</label>
-                <input type="text" className="form-input" value="pyannote.audio (speaker-diarization-3.1)" disabled />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">MOM Generation Model</label>
-                <input type="text" className="form-input" value="Groq LLaMA 3.3 (llama-3.3-70b-versatile) / Gemini 2.0" disabled />
+                <input type="text" className="form-input" value="Email and password" disabled />
               </div>
             </div>
           )}
@@ -230,74 +153,11 @@ export default function SettingsPage() {
 
               <div className="form-group">
                 <label className="form-label">Failure Notifications</label>
-                <input type="text" className="form-input" value="Logged to Supabase system_events" disabled />
+                <input type="text" className="form-input" value="Logged for support" disabled />
               </div>
             </div>
           )}
 
-          {/* System Section */}
-          {activeSection === 'system' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-              <h2 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
-                System &amp; Infrastructure
-              </h2>
-
-              {/* Supabase Status */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', backgroundColor: 'var(--bg-soft)', borderRadius: '6px', border: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Database size={14} color="var(--brand-blue)" aria-hidden="true" />
-                  <span style={{ fontSize: '12.5px', fontWeight: 500, color: 'var(--text-primary)' }}>
-                    Supabase Database
-                  </span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' }}>
-                  <span
-                    className="status-dot-sm"
-                    style={{ backgroundColor: supabaseConnected ? 'var(--status-success)' : 'var(--status-error)' }}
-                  />
-                  <span>{supabaseConnected ? 'Connected' : 'Disconnected'}</span>
-                </div>
-              </div>
-
-              {/* Systemd reference */}
-              <div>
-                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                  Oracle VM Systemd Service:
-                </div>
-                <pre
-                  style={{
-                    backgroundColor: 'var(--bg-soft)',
-                    padding: '10px 12px',
-                    borderRadius: '6px',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '11.5px',
-                    border: '1px solid var(--border)',
-                    overflowX: 'auto',
-                  }}
-                >
-{`sudo systemctl status meeting-recorder-worker.service
-journalctl -u meeting-recorder-worker -f`}
-                </pre>
-              </div>
-
-              {/* Security Checklist */}
-              <div>
-                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                  Secret Isolation:
-                </div>
-                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
-                  <li style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <CheckCircle2 size={13} color="var(--status-success)" aria-hidden="true" />
-                    <span>Google credentials &amp; cookies: strictly isolated on worker host.</span>
-                  </li>
-                  <li style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <CheckCircle2 size={13} color="var(--status-success)" aria-hidden="true" />
-                    <span>HuggingFace &amp; LLM tokens: never sent to browser client.</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

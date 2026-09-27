@@ -206,6 +206,17 @@ export default function MeetingsPage() {
     return meetings.find((m) => m.id === selectedMeetingId) || (meetings.length > 0 ? meetings[0] : null);
   }, [meetings, selectedMeetingId]);
 
+  // The one meeting currently mid-pipeline (joining / recording / processing).
+  // ProcessingProgress decides what to render; this only picks the meeting.
+  const liveMeeting = useMemo(() => {
+    return (
+      meetings.find((m) => m.status === 'processing') ||
+      meetings.find((m) => m.status === 'recording') ||
+      meetings.find((m) => m.status === 'joining') ||
+      null
+    );
+  }, [meetings]);
+
   // Reset audio when selected meeting changes
   useEffect(() => {
     if (audioRef.current) {
@@ -390,9 +401,7 @@ export default function MeetingsPage() {
       </section>
 
       {/* Live Recording / Processing Progress Banner */}
-      {meetings.find(m => ['recording', 'processing', 'joining'].includes(m.status)) && (
-        <ProcessingProgress meeting={meetings.find(m => ['recording', 'processing', 'joining'].includes(m.status))} />
-      )}
+      {liveMeeting && <ProcessingProgress meeting={liveMeeting} />}
 
       {/* 3. Controls & Filter Pills Row */}
       <div className="meetings-controls-bar">

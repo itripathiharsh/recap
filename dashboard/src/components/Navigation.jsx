@@ -15,7 +15,6 @@ import {
   LayoutGrid,
   Users,
   BarChart3,
-  CreditCard,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { applyWorkspaceScope, useWorkspace } from '../lib/workspace';
@@ -32,35 +31,36 @@ export default function Navigation({ session }) {
   });
 
   useEffect(() => {
-    async function checkData() {
+    async function checkCount() {
       try {
         const { count } = await applyWorkspaceScope(
-          supabase.from('meetings').select('*', { count: 'exact', head: true }),
+          supabase.from('meetings').select('id', { count: 'exact', head: true }),
           activeOrgId
         );
         setMeetingCount(count);
-
-        const { data: userData } = await supabase
-          .from('User')
-          .select('name, email')
-          .eq('email', session?.user?.email || '')
-          .limit(1);
-
-        if (userData && userData.length > 0) {
-          setUserProfile({
-            name: userData[0].name === 'Harsh' ? 'Harsh Vardhan Tripathi' : userData[0].name,
-            email: userData[0].email,
-          });
-        }
       } catch (err) {
         console.error('Sidebar data fetch error:', err);
       }
     }
 
-    checkData();
-    const interval = setInterval(checkData, 30000);
+    checkCount();
+    const interval = setInterval(checkCount, 60000);
     return () => clearInterval(interval);
-  }, [session, activeOrgId]);
+  }, [activeOrgId]);
+
+  // Identity comes from the session, which is authoritative. The previous code
+  // read `public."User"` and rewrote one specific name
+  // (`name === 'Harsh' ? 'Harsh Vardhan Tripathi' : name`); that table does not
+  // exist in this project, so this always fell back to the email local-part.
+  useEffect(() => {
+    const u = session?.user;
+    if (!u) return;
+    const name =
+      u.user_metadata?.full_name ||
+      u.user_metadata?.name ||
+      (u.email ? u.email.split('@')[0] : 'Account');
+    setUserProfile({ name, email: u.email || '' });
+  }, [session]);
 
   const handleSignOut = async () => {
     try {
@@ -80,13 +80,13 @@ export default function Navigation({ session }) {
     { href: '/settings', label: 'Settings', icon: Settings },
   ];
 
+  // The top nav is already workspace-scoped, so in organisation mode it shows
+  // that organisation's data. Only organisation-management views belong here.
   const organisationItems = [
     { href: '/organisation/overview', label: 'Overview', icon: LayoutGrid },
-    { href: '/organisation/meetings', label: 'Meetings', icon: CalendarDays },
     { href: '/organisation/members', label: 'Members', icon: Users },
     { href: '/organisation/analytics', label: 'Analytics', icon: BarChart3 },
-    { href: '/organisation/settings', label: 'Settings', icon: Settings },
-    { href: '/organisation/billing', label: 'Billing', icon: CreditCard },
+    { href: '/organisation/settings', label: 'Org Settings', icon: Settings },
   ];
 
   const renderNavItem = (item) => {

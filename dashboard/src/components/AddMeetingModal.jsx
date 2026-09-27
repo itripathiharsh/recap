@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { X, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { useWorkspace } from '../lib/workspace';
+import { applyWorkspaceScope, useWorkspace } from '../lib/workspace';
 
 export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
   const { activeOrgId } = useWorkspace();
@@ -53,12 +53,16 @@ export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
 
     setLoading(true);
     try {
-      // Check for duplicate pending/scheduled meeting with the same link
-      const { data: duplicates } = await supabase
-        .from('meetings')
-        .select('id, title, status')
-        .eq('meet_link', meetLink.trim())
-        .in('status', ['scheduled', 'queued', 'joining', 'recording']);
+      // Duplicate check must be scoped to the active workspace, otherwise a link
+      // scheduled in the other workspace would block this one and leak its title.
+      const { data: duplicates } = await applyWorkspaceScope(
+        supabase
+          .from('meetings')
+          .select('id, title, status')
+          .eq('meet_link', meetLink.trim())
+          .in('status', ['scheduled', 'queued', 'joining', 'recording']),
+        activeOrgId
+      );
 
       if (duplicates && duplicates.length > 0) {
         setError(`A meeting with this link is already scheduled: "${duplicates[0].title}".`);

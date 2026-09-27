@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { applyWorkspaceScope, filterToMeetings, useWorkspace } from '../../lib/workspace';
+import { percent, formatBytes } from '../../lib/format';
+import { countParticipants } from '../../lib/metrics';
 import AddMeetingModal from '../../components/AddMeetingModal';
 import TopHeader from '../../components/TopHeader';
 
@@ -32,12 +34,10 @@ export default function LibraryPage() {
   const [transcriptsCount, setTranscriptsCount] = useState(0);
   const [speakerTurns, setSpeakerTurns] = useState({});
   const [diskUsage, setDiskUsage] = useState({
-    usedMb: '0.0',
-    usedGb: '0.00',
-    totalGb: '1.0',
-    pct: 0,
-    fileCount: 0,
-    isSupabase: true,
+    usedBytes: null,
+    quotaBytes: null,
+    pct: null,
+    available: false,
   });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -87,27 +87,24 @@ export default function LibraryPage() {
         setTranscriptsCount(transCount);
         setSpeakerTurns(turnsMap);
 
-        // Fetch real Supabase Storage usage via RPC
-        try {
-          const { data: storageData, error: storageErr } = await supabase.rpc('get_storage_usage');
-          if (storageData && !storageErr) {
-            const usedMb = Number(storageData.used_mb || 0).toFixed(1);
-            const totalGb = Number(storageData.total_gb || 1.0).toFixed(1);
-            const usedGb = Number(storageData.used_gb || 0).toFixed(3);
-            const rawPct = ((storageData.used_bytes || 0) / (totalGb * 1024 * 1024 * 1024)) * 100;
-            const pct = Math.max(0.1, Math.round(rawPct * 10) / 10);
-            setDiskUsage({
-              usedMb,
-              usedGb,
-              totalGb,
-              pct,
-              fileCount: storageData.file_count || 0,
-              isSupabase: true,
-            });
-          }
-        } catch (storageCatch) {
-          console.warn('Storage RPC fetch warning:', storageCatch);
-        }
+        // Storage: read the organisation's real quota/usage snapshot. The
+        // get_storage_usage RPC does not exist in any migration, so calling it
+        // silently produced a fabricated "1.0 GB / 0.1%". If there is no
+        // settings row the card shows "not reported" instead of a number.
+        const { data: settingsRow } = await supabase
+          .from('organisation_settings')
+          .select('storage_used_bytes, storage_quota_bytes')
+          .eq('organisation_id', activeOrgId || '')
+          .maybeSingle();
+
+        const used = settingsRow?.storage_used_bytes ?? null;
+        const quota = settingsRow?.storage_quota_bytes ?? null;
+        setDiskUsage({
+          usedBytes: used,
+          quotaBytes: quota,
+          pct: percent(used, quota),
+          available: used != null || quota != null,
+        });
       } catch (err) {
         console.error('Error loading library data:', err);
       } finally {
@@ -136,18 +133,17 @@ export default function LibraryPage() {
     return moms.reduce((sum, m) => sum + (Array.isArray(m.action_items) ? m.action_items.length : 0), 0);
   }, [moms]);
 
-  // Distinct speakers across all meetings
+  // Distinct speakers across all meetings. Diarization placeholders are not
+  // people, and an empty result must read as zero — never as a literal 3.
   const uniqueSpeakersList = useMemo(() => {
     const set = new Set();
     Object.values(speakerTurns).forEach((arr) => {
       arr.forEach((s) => set.add(s));
     });
-    return Array.from(set);
+    return Array.from(set).filter((s) => countParticipants([{ speaker: s }]) > 0).sort();
   }, [speakerTurns]);
 
-  const uniqueSpeakersCount = useMemo(() => {
-    return uniqueSpeakersList.length || 3;
-  }, [uniqueSpeakersList]);
+  const uniqueSpeakersCount = uniqueSpeakersList.length;
 
   // Derived real tags from actual meeting titles
   const popularTags = useMemo(() => {
@@ -576,27 +572,45 @@ export default function LibraryPage() {
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A' }}>Storage Usage</div>
-                  <span style={{ fontSize: '10px', color: '#0066FF', backgroundColor: '#EFF6FF', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                    Supabase
-                  </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: '#64748B', marginTop: '2px' }}>
-                  <span>{diskUsage.usedMb} MB of {diskUsage.totalGb} GB used</span>
-                  <span className="tabular-nums" style={{ fontWeight: 600, color: '#0F172A' }}>{diskUsage.pct}%</span>
+                  {diskUsage.available ? (
+                    <>
+                      <span>
+                        {formatBytes(diskUsage.usedBytes) || '0 B'}
+                        {diskUsage.quotaBytes != null ? ` of ${formatBytes(diskUsage.quotaBytes)} used` : ' used'}
+                      </span>
+                      <span className="tabular-nums" style={{ fontWeight: 600, color: '#0F172A' }}>
+                        {diskUsage.pct == null ? '—' : `${diskUsage.pct}%`}
+                      </span>
+                    </>
+                  ) : (
+                    <span>No storage usage reported for this workspace yet.</span>
+                  )}
                 </div>
               </div>
             </div>
 
-            <div style={{ height: '6px', backgroundColor: '#F1F5F9', borderRadius: '3px', overflow: 'hidden', marginBottom: '8px' }}>
-              <div style={{ width: `${Math.max(diskUsage.pct, 3)}%`, height: '100%', backgroundColor: '#0066FF', borderRadius: '3px', transition: 'width 300ms ease' }} />
-            </div>
+            {diskUsage.available ? (
+              <>
+                <div style={{ height: '6px', backgroundColor: '#F1F5F9', borderRadius: '3px', overflow: 'hidden', marginBottom: '8px' }}>
+                  <div style={{ width: `${diskUsage.pct ?? 0}%`, height: '100%', backgroundColor: '#0066FF', borderRadius: '3px', transition: 'width 300ms ease' }} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: '#94A3B8', marginBottom: '8px' }}>
+                  <span>
+                    {diskUsage.quotaBytes == null
+                      ? 'No quota reported'
+                      : `${formatBytes(Math.max(0, diskUsage.quotaBytes - (diskUsage.usedBytes || 0)))} remaining`}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '8px' }}>
+                Storage totals appear here once your workspace reports usage.
+              </div>
+            )}
 
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: '#94A3B8', marginBottom: '8px' }}>
-              <span>{diskUsage.fileCount} audio files</span>
-              <span>Bucket: &apos;recordings&apos;</span>
-            </div>
-
-            <Link href="/settings" style={{ fontSize: '12px', color: '#0066FF', fontWeight: 600, textDecoration: 'none' }}>
+            <Link href="/organisation/settings" style={{ fontSize: '12px', color: '#0066FF', fontWeight: 600, textDecoration: 'none' }}>
               Manage retention &amp; storage &rarr;
             </Link>
           </div>

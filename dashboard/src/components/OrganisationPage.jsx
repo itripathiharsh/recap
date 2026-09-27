@@ -11,7 +11,14 @@ import { useWorkspace } from '../lib/workspace';
  *   user to switch (or create) an organisation instead of rendering data.
  * - Renders the standard Recap page header, then the page body.
  */
-export default function OrganisationPage({ title, subtitle, breadcrumb, actions, children }) {
+export default function OrganisationPage({
+  title,
+  subtitle,
+  breadcrumb,
+  actions,
+  chrome = true,
+  children,
+}) {
   const { loading, isOrganisation, workspaces, switchWorkspace } =
     useWorkspace();
 
@@ -38,7 +45,7 @@ export default function OrganisationPage({ title, subtitle, breadcrumb, actions,
 
   return (
     <div>
-      {breadcrumb && (
+      {chrome && breadcrumb && (
         <div
           style={{
             fontSize: '13px',
@@ -54,7 +61,7 @@ export default function OrganisationPage({ title, subtitle, breadcrumb, actions,
         </div>
       )}
 
-      {(title || actions) && (
+      {chrome && (title || actions) && (
         <div
           style={{
             display: 'flex',

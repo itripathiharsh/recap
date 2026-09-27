@@ -324,6 +324,44 @@ def db_record_system_event(
         return False
 
 
+def db_record_pipeline_stage(
+    meeting_id: str,
+    stage: str,
+    state: str,
+    detail: str | None = None,
+) -> bool:
+    """Record a real pipeline stage transition for a meeting.
+
+    The dashboard renders processing progress from these rows, so `stage` must
+    be one of PIPELINE_STAGES and `state` one of 'started' | 'completed' |
+    'failed'. The timestamp is written into metadata rather than relying on a
+    created_at column, so the UI reads a value we control.
+    """
+    client = get_supabase_client()
+    if not client:
+        return False
+
+    at = datetime.now(timezone.utc).isoformat()
+    metadata: dict[str, Any] = {"stage": stage, "state": state, "at": at}
+    if detail:
+        metadata["detail"] = detail
+
+    try:
+        client.table("system_events").insert(
+            {
+                "level": "info" if state != "failed" else "error",
+                "event_type": "pipeline_stage",
+                "message": f"{stage} {state}",
+                "meeting_id": meeting_id,
+                "metadata": metadata,
+            }
+        ).execute()
+        return True
+    except Exception as exc:
+        logger.error("Failed to record pipeline stage %s/%s: %s", stage, state, exc)
+        return False
+
+
 def db_create_job(
     meeting_id: str,
     job_type: str = "full_recording_pipeline",
