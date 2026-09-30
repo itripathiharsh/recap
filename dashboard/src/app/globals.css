@@ -524,6 +524,11 @@ kbd {
   border-radius: 2px;
 }
 
+/* Header nav uses the JS sliding indicator instead of the static underline */
+.landing-nav-tabs .landing-tab-btn.active::after {
+  display: none;
+}
+
 .landing-btn-primary {
   display: inline-flex;
   align-items: center;
@@ -609,7 +614,7 @@ kbd {
   background: #FFFFFF;
   box-shadow: -20px 30px 70px -15px rgba(0, 60, 180, 0.14), 0 0 1px rgba(0,0,0,0.06);
   overflow: hidden;
-  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .mockup-3d-card:hover {
@@ -683,6 +688,339 @@ kbd {
   background: none;
   border: none;
   cursor: pointer;
+}
+
+/* ==========================================================================
+   Landing Motion System (tokens: fast 120 / base 200 / medium 280 / slow 400 / hero 600)
+   GPU-only properties: transform + opacity. Reduced-motion contract at the bottom.
+   ========================================================================== */
+.landing-root {
+  --l-fast: 120ms;
+  --l-base: 200ms;
+  --l-med: 280ms;
+  --l-slow: 400ms;
+  --l-hero: 600ms;
+  --l-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --l-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --l-ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes l-fade-up {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes l-view-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes l-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-9px); }
+}
+@keyframes l-pulse {
+  0% { box-shadow: 0 0 0 0 var(--pulse-c, rgba(16, 185, 129, 0.45)); }
+  70% { box-shadow: 0 0 0 9px rgba(0, 0, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+}
+@keyframes l-wave {
+  from { transform: scaleY(0.2); }
+  to { transform: scaleY(1); }
+}
+@keyframes l-marquee {
+  to { transform: translateX(-50%); }
+}
+@keyframes l-caret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes l-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Hero entrance choreography (once, first paint) */
+.hero-enter {
+  animation: l-fade-up var(--l-hero) var(--l-ease-emphasized) both;
+}
+
+/* Tab view swap */
+.l-view-enter {
+  animation: l-view-in var(--l-med) var(--l-ease-out) both;
+}
+
+/* Content that re-cycles (recent meetings rows, price values) */
+.l-fade-swap {
+  animation: l-view-in var(--l-med) var(--l-ease-out) both;
+}
+
+/* Scroll reveal — IntersectionObserver adds .in-view once */
+.l-reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity var(--l-slow) var(--l-ease-out), transform var(--l-slow) var(--l-ease-out);
+}
+.l-reveal.in-view {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Continuous "alive" loops */
+.l-float {
+  animation: l-float 7s var(--l-ease-in-out) infinite;
+}
+.l-pulse-dot {
+  animation: l-pulse 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.l-wave-bar {
+  transform-origin: center bottom;
+  animation: l-wave 1s var(--l-ease-in-out) infinite alternate;
+  animation-delay: calc(var(--i) * -90ms);
+}
+.l-caret {
+  animation: l-caret 1s linear infinite;
+}
+.l-spin {
+  animation: l-spin 1s linear infinite;
+}
+
+/* Pointer-tracked tilt smoothing */
+.l-tilt {
+  transition: transform var(--l-base) var(--l-ease-out);
+}
+
+/* Sliding nav underline (JS-measured translateX + width) */
+.landing-nav-tabs {
+  position: relative;
+}
+.l-nav-indicator {
+  position: absolute;
+  left: 0;
+  bottom: -19px;
+  height: 2px;
+  background-color: #0066FF;
+  border-radius: 2px;
+  pointer-events: none;
+  transition: transform var(--l-base) var(--l-ease-out), width var(--l-base) var(--l-ease-out), opacity var(--l-fast) ease;
+}
+
+/* Pricing toggle — pure CSS sliding pill (equal 2-col grid, transform only) */
+.l-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: #F1F5F9;
+  padding: 4px;
+  border-radius: 9999px;
+}
+.l-toggle-pill {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  background: #FFFFFF;
+  border-radius: 9999px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: transform var(--l-base) var(--l-ease-out);
+}
+.l-toggle[data-active='yearly'] .l-toggle-pill {
+  transform: translateX(100%);
+}
+.l-toggle-btn {
+  position: relative;
+  z-index: 1;
+  padding: 6px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #64748B;
+  white-space: nowrap;
+  transition: color var(--l-fast) ease;
+}
+.l-toggle-btn.active {
+  color: #0066FF;
+}
+
+/* FAQ accordion — grid-rows trick, always mounted */
+.l-acc-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--l-base) var(--l-ease-out);
+}
+.l-acc-panel.open {
+  grid-template-rows: 1fr;
+}
+.l-acc-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+.accordion-chevron {
+  flex-shrink: 0;
+  transition: transform var(--l-base) var(--l-ease-out);
+}
+.accordion-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* Logo marquee */
+.l-marquee {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+.l-marquee-track {
+  display: flex;
+  align-items: center;
+  width: max-content;
+  animation: l-marquee 26s linear infinite;
+}
+.l-marquee:hover .l-marquee-track {
+  animation-play-state: paused;
+}
+.l-marquee-set {
+  display: flex;
+  align-items: center;
+  gap: 64px;
+  padding-right: 64px;
+}
+
+/* Doodle draw-on (self-observed .in-view) */
+.doodle-path {
+  stroke-dasharray: 160;
+  stroke-dashoffset: 160;
+  transition: stroke-dashoffset var(--l-hero) var(--l-ease-out) 120ms;
+}
+.l-doodle.in-view .doodle-path {
+  stroke-dashoffset: 0;
+}
+.doodle-text-anim {
+  opacity: 0;
+  transition: opacity var(--l-slow) ease 240ms;
+}
+.l-doodle.in-view .doodle-text-anim {
+  opacity: 1;
+}
+
+/* Responsive layout grids (replace inline grids so they collapse cleanly) */
+.landing-split {
+  display: grid;
+  grid-template-columns: 1.1fr 1.2fr;
+  gap: 48px;
+  align-items: center;
+}
+.landing-split-rev {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 32px;
+  align-items: center;
+}
+.landing-split-even {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 40px;
+  align-items: center;
+}
+.landing-faq-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr));
+  gap: 16px;
+}
+.landing-mock-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 16px;
+}
+
+@media (max-width: 980px) {
+  .landing-split,
+  .landing-split-rev,
+  .landing-split-even {
+    grid-template-columns: 1fr;
+    gap: 56px;
+  }
+  .mockup-3d-wrapper {
+    max-width: 560px;
+    margin: 0 auto;
+  }
+}
+@media (max-width: 640px) {
+  .landing-doodle {
+    display: none !important;
+  }
+}
+@media (max-width: 1150px) {
+  .landing-doodle-faq {
+    display: none !important;
+  }
+}
+@media (max-width: 560px) {
+  .landing-mock-grid {
+    grid-template-columns: 1fr;
+  }
+  .landing-mock-search {
+    display: none !important;
+  }
+  /* Security shield graphic collapses into a simple card */
+  .landing-shield {
+    width: 100% !important;
+    height: auto !important;
+    border-radius: 16px !important;
+    padding: 24px;
+    flex-direction: column;
+    gap: 12px;
+    background: #FFFFFF !important;
+  }
+  .landing-shield-badge {
+    position: static !important;
+    white-space: normal !important;
+  }
+}
+
+/* Reduced-motion contract: loops stop, reveals/entrances settle instantly, content complete */
+@media (prefers-reduced-motion: reduce) {
+  .landing-root .hero-enter,
+  .landing-root .l-view-enter,
+  .landing-root .l-fade-swap,
+  .landing-root .l-float,
+  .landing-root .l-pulse-dot,
+  .landing-root .l-wave-bar,
+  .landing-root .l-caret {
+    animation: none;
+  }
+  .landing-root .l-wave-bar {
+    transform: none;
+  }
+  .landing-root .l-marquee-track {
+    animation: none;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .landing-root .l-marquee-copy {
+    display: none;
+  }
+  .landing-root .l-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .landing-root .doodle-path {
+    stroke-dashoffset: 0;
+    transition: none;
+  }
+  .landing-root .doodle-text-anim {
+    opacity: 1;
+    transition: none;
+  }
+  .landing-root .l-acc-panel,
+  .landing-root .accordion-chevron,
+  .landing-root .l-toggle-pill,
+  .landing-root .l-nav-indicator,
+  .landing-root .l-tilt,
+  .landing-root .mockup-3d-card {
+    transition-duration: 0.01ms;
+  }
 }
 
 /* ==========================================================================

@@ -26,9 +26,23 @@ export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
 
   if (!isOpen) return null;
 
+  const normalizeMeetUrl = (url) => {
+    let clean = (url || '').trim();
+    if (!clean) return '';
+    const codeMatch = clean.match(/([a-z]{3}-[a-z]{4}-[a-z]{3})/i);
+    if (codeMatch) {
+      return `https://meet.google.com/${codeMatch[1].toLowerCase()}`;
+    }
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = 'https://' + clean;
+    }
+    return clean;
+  };
+
   const validateMeetUrl = (url) => {
+    const normalized = normalizeMeetUrl(url);
     const pattern = /^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}(\?.*)?$/i;
-    return pattern.test(url.trim());
+    return pattern.test(normalized);
   };
 
   const handleSubmit = async (e) => {
@@ -40,8 +54,9 @@ export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
       return;
     }
 
-    if (!validateMeetUrl(meetLink)) {
-      setError('Enter a valid Google Meet link (e.g. https://meet.google.com/abc-defg-hij).');
+    const cleanLink = normalizeMeetUrl(meetLink);
+    if (!validateMeetUrl(cleanLink)) {
+      setError('Enter a valid Google Meet link or code (e.g. https://meet.google.com/abc-defg-hij or abc-defg-hij).');
       return;
     }
 
@@ -53,45 +68,80 @@ export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
 
     setLoading(true);
     try {
-      // Duplicate check must be scoped to the active workspace, otherwise a link
-      // scheduled in the other workspace would block this one and leak its title.
-      const { data: duplicates } = await applyWorkspaceScope(
-        supabase
-          .from('meetings')
-          .select('id, title, status')
-          .eq('meet_link', meetLink.trim())
-          .in('status', ['scheduled', 'queued', 'joining', 'recording']),
-        activeOrgId
-      );
+      // Duplicate check must be scoped to the active workspace
+      try {
+        const { data: duplicates } = await applyWorkspaceScope(
+          supabase
+            .from('meetings')
+            .select('id, title, status')
+            .eq('meet_link', cleanLink)
+            .in('status', ['scheduled', 'queued', 'joining', 'recording']),
+          activeOrgId
+        );
 
-      if (duplicates && duplicates.length > 0) {
-        setError(`A meeting with this link is already scheduled: "${duplicates[0].title}".`);
-        setLoading(false);
-        return;
+        if (duplicates && duplicates.length > 0) {
+          setError(`A meeting with this link is already scheduled: "${duplicates[0].title}".`);
+          setLoading(false);
+          return;
+        }
+      } catch (dupErr) {
+        console.warn('Duplicate check warning:', dupErr);
+      }
+
+      // Check current logged-in user
+      let currentUserId = null;
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        currentUserId = userData?.user?.id || null;
+      } catch (authErr) {
+        console.warn('Auth check in modal:', authErr);
       }
 
       const payload = {
         title: title.trim(),
-        meet_link: meetLink.trim(),
+        meet_link: cleanLink,
         scheduled_start: scheduledDateTime.toISOString(),
         expected_duration_minutes: parseInt(duration, 10) || 30,
-        status: 'scheduled',
+        status: isInstant ? 'queued' : 'scheduled',
         workspace_type: activeOrgId ? 'organisation' : 'individual',
         organisation_id: activeOrgId || null,
       };
+
+      if (currentUserId) {
+        payload.user_id = currentUserId;
+        payload.owner_id = currentUserId;
+      }
 
       if (activeOrgId) {
         payload.visibility = visibility;
       }
 
-      const { data, error: insertError } = await supabase.from('meetings').insert([payload]).select();
+      let createdMeeting = null;
 
-      if (insertError) throw insertError;
+      // 1. Try client insertion
+      try {
+        const { data, error: insertError } = await supabase.from('meetings').insert([payload]).select();
+        if (insertError) throw insertError;
+        createdMeeting = data?.[0] || null;
+      } catch (clientErr) {
+        console.warn('Client insert encountered error, trying server fallback:', clientErr);
+        // 2. Fallback to server route (handles RLS bypass safely)
+        const res = await fetch('/api/meetings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json.error || 'Failed to schedule meeting via server fallback.');
+        }
+        createdMeeting = json.meeting;
+      }
 
       setTitle('');
       setMeetLink('');
-      if (onMeetingAdded) {
-        onMeetingAdded(data?.[0]);
+      if (onMeetingAdded && createdMeeting) {
+        onMeetingAdded(createdMeeting);
       }
       onClose();
     } catch (err) {

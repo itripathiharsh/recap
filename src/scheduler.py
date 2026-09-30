@@ -71,6 +71,25 @@ class SchedulerDaemon:
                     message="Stale meeting marked failed upon worker startup.",
                     meeting_id=mid,
                 )
+
+            # Auto-expire ancient scheduled meetings older than 30 minutes
+            from datetime import timedelta
+            now = datetime.now(timezone.utc)
+            abandoned_cutoff = (now - timedelta(minutes=30)).isoformat()
+            res_abandoned = (
+                client.table("meetings")
+                .select("id, title, scheduled_start")
+                .eq("status", "scheduled")
+                .lt("scheduled_start", abandoned_cutoff)
+                .execute()
+            )
+            for m in (res_abandoned.data or []):
+                logger.info("Expiring stale scheduled meeting: %s ('%s')", m["id"], m.get("title"))
+                db_update_meeting_status(
+                    m["id"],
+                    status="failed",
+                    error_message="Meeting expired: scheduled start was over 30 minutes ago without worker execution.",
+                )
         except Exception as exc:
             logger.error("Error during stale job recovery: %s", exc)
 

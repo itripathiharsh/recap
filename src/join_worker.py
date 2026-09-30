@@ -81,6 +81,19 @@ def _ensure_display_and_audio(visible: bool = False) -> None:
 
     # Ensure VirtualSink is loaded for audio capture
     res = subprocess.run(["pactl", "list", "short", "sinks"], capture_output=True, text=True)
+    if res.returncode != 0:
+        # Broken pulse socket or daemon stopped, clean and restart
+        try:
+            pulse_user_dir = Path(f"/run/user/{os.getuid()}/pulse")
+            if pulse_user_dir.exists():
+                import shutil
+                shutil.rmtree(pulse_user_dir, ignore_errors=True)
+        except Exception:
+            pass
+        subprocess.run(["pulseaudio", "--start", "--exit-idle-time=-1"], capture_output=True)
+        time.sleep(0.5)
+        res = subprocess.run(["pactl", "list", "short", "sinks"], capture_output=True, text=True)
+
     if "VirtualSink" not in res.stdout:
         subprocess.run([
             "pactl", "load-module", "module-null-sink",
@@ -156,6 +169,11 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
         "button:has-text('Ask to join')",
         "button:has-text('Join now')",
         "button:has-text('Join')",
+        "button[aria-label*='Ask to join' i]",
+        "button[aria-label*='Join now' i]",
+        "button[aria-label*='Join meeting' i]",
+        "span:has-text('Ask to join')",
+        "span:has-text('Join now')",
         "button[jsname='Qx7uuf']",
         "div[role='button']:has-text('Ask to join')",
         "div[role='button']:has-text('Join now')",
@@ -165,7 +183,7 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
         try:
             loc = page.locator(sel)
             if loc.count() > 0 and loc.first.is_visible():
-                loc.first.click()
+                loc.first.click(force=True)
                 clicked = True
                 logger.info("Clicked join button via selector: %s", sel)
                 break

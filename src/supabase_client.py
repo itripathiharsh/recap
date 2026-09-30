@@ -416,8 +416,12 @@ def db_update_job(
         return False
 
 
-def db_get_upcoming_meetings(lookahead_minutes: int = 5) -> list[dict[str, Any]]:
-    """Fetch meetings scheduled within lookahead_minutes or already overdue."""
+def db_get_upcoming_meetings(lookahead_minutes: int = 5, max_overdue_minutes: int = 20) -> list[dict[str, Any]]:
+    """Fetch meetings scheduled within lookahead_minutes or recently queued.
+
+    Prioritizes instant 'queued' meetings first, then scheduled meetings within
+    the active time window, strictly ignoring dead/stale meetings from hours/days ago.
+    """
     client = get_supabase_client()
     if not client:
         return []
@@ -426,14 +430,29 @@ def db_get_upcoming_meetings(lookahead_minutes: int = 5) -> list[dict[str, Any]]
 
     now = datetime.now(timezone.utc)
     threshold = (now + timedelta(minutes=lookahead_minutes)).isoformat()
+    oldest_cutoff = (now - timedelta(minutes=max_overdue_minutes)).isoformat()
 
     try:
+        # 1. Immediate priority: explicitly queued meetings (e.g. Instant Join)
+        queued_res = (
+            client.table("meetings")
+            .select("*")
+            .eq("status", "queued")
+            .order("created_at", desc=True)
+            .limit(5)
+            .execute()
+        )
+        if queued_res.data:
+            return queued_res.data
+
+        # 2. Scheduled meetings within active window (not older than oldest_cutoff)
         res = (
             client.table("meetings")
             .select("*")
-            .in_("status", ["scheduled", "queued"])
+            .eq("status", "scheduled")
+            .gte("scheduled_start", oldest_cutoff)
             .lte("scheduled_start", threshold)
-            .order("scheduled_start")
+            .order("scheduled_start", desc=True)
             .execute()
         )
         return res.data or []
