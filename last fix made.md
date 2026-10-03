@@ -108,6 +108,28 @@ sequenceDiagram
   - [`src/worker.py`](file:///d:/meet%20recorder/src/worker.py): Added `--meeting-id <UUID>` CLI flag to run single meetings on demand.
   - [`src/scheduler.py`](file:///d:/meet%20recorder/src/scheduler.py): Added `--once` flag for one-shot cron executions.
 
+### Fix 9: Dashboard Direct Supabase Insert Bypassing Cloud Runner
+- **File Modified**: [`dashboard/src/components/AddMeetingModal.jsx`](file:///d:/meet%20recorder/dashboard/src/components/AddMeetingModal.jsx).
+- **Issue**: When clicking "Schedule Meeting", the modal executed `supabase.from('meetings').insert([payload])` directly from the browser. Because client-side Supabase insert succeeded, it never called `/api/meetings` or `/api/meetings/[id]/dispatch`. The meeting stayed in Supabase as `queued`, but GitHub Actions was never signaled.
+- **Fix**: Added an immediate trigger in `AddMeetingModal.jsx` upon successful creation:
+  ```javascript
+  if (createdMeeting?.id) {
+    fetch(`/api/meetings/${createdMeeting.id}/dispatch`, { method: 'POST' }).catch(...);
+  }
+  ```
+  Deploys directly via Vercel CLI to production `recap-meet.vercel.app`.
+
+### Fix 10: Empty Google Meet Room Abort ("Host not present" retry loop)
+- **File Modified**: [`src/join_worker.py`](file:///d:/meet%20recorder/src/join_worker.py).
+- **Issue**: If the human host has not yet opened Google Meet when the runner starts, Google Meet immediately displays:
+  > *"You can't join this video call. No one can join a meeting unless invited or admitted by the host."*
+  The bot previously had `text="You can't join this video call"` in its `rejection_selectors`, causing the bot to misinterpret the absence of the host as a fatal user rejection and exit in 2 seconds.
+- **Fix**:
+  1. Created `HostNotPresentError(Exception)` and separated host absence messages from actual human rejections (`"Someone in the call denied your request"`).
+  2. Wrapped `join_and_record` in a patient polling loop: if the host is not yet in the room, the bot logs `"Host has not entered Google Meet room yet. Waiting 12s before re-checking..."` and reloads/checks for up to 5 minutes (`admission_timeout`).
+  3. Added Playwright stealth script removing `navigator.webdriver`.
+
+
 ---
 
 ## 4. Verification & Live Proof
