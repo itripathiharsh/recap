@@ -224,3 +224,37 @@ This causes an immediate kick to *"You can't join this video call - Return to ho
 3. The script automatically synchronizes with Google Meet, exports `data/google_auth.json`, and uploads it directly to GitHub Actions secret `GOOGLE_SESSION_STATE`.
 4. The cloud runner reads `GOOGLE_SESSION_STATE`, mounts cookies into Playwright Chromium, and passes Google's device verification without getting blocked.
 
+---
+
+## 8. Audio Playback, Instant Call Ejection Detection & Pipeline Synchronization
+
+### 8.1 Supabase Storage Audio Playback (`HTTP 400 Bucket Not Found`)
+- **Root Cause**: The Supabase Storage bucket `recordings` was created with `public: false`. When the frontend HTML5 `<audio>` player attempted to stream `https://<supabase-url>/storage/v1/object/public/recordings/<meeting_id>/audio.wav`, Supabase rejected unauthenticated requests with `HTTP 400 Bad Request (NoSuchBucket)`.
+- **Fix**:
+  - Updated `recordings` bucket visibility in Supabase Storage to `public: true`.
+  - Added programmatic verification in `src/supabase_client.py` (`db_upload_recording_audio`) ensuring `recordings` bucket remains public upon upload.
+  - Verified audio streaming with HTTP 206 Partial Content range requests.
+  - Handled playback promise rejections and added `onError` listeners in `dashboard/src/app/meetings/[id]/page.jsx`.
+
+### 8.2 Immediate Detection When Participants Leave Google Meet
+- **Root Cause**: Previously, if all participants left without explicitly clicking "End call for everyone", Google Meet displayed *"You're the only one here"* or *"Everyone else has left"*. The bot lingered until the silence timeout or duration cap expired.
+- **Fix**:
+  - Enhanced `_check_bot_removed(page)` in `src/recorder.py` to inspect:
+    1. Google Meet DOM banners: *"You're the only one here"*, *"Everyone else has left"*, *"The call ended"*, *"Return to home screen"*, *"Rejoin"*, *"Check your audio and video"*.
+    2. Real-time participant counter in the "People" button (`match <= 1`).
+    3. Video tile counts (`div[data-participant-id]` / `div[data-allocation-index] <= 1`).
+    4. In-call leave button disappearance.
+  - Lowered default silence timeout from 60s to 35s.
+  - Lowered Supabase status check polling interval to 2.5s.
+
+### 8.3 "Ended: In progress" & Duration Displayed as "Not Recorded"
+- **Root Cause**: `src/worker.py` only populated `ended_at` when the entire pipeline (including STT, diarization, and MOM generation) completed. During the 2–3 minutes of AI transcription, the dashboard displayed `Ended: In progress` and `Duration: Not recorded`.
+- **Fix**:
+  - Updated `src/worker.py` to record `call_ended_at` immediately upon audio capture completion when transitioning to `status: "processing"`.
+  - Added duration derivation fallback in `dashboard/src/app/meetings/[id]/page.jsx` using the loaded audio element's metadata duration.
+
+### 8.4 User Control: "End & Process" Button
+- **Added**: An **"End & Process"** button in `dashboard/src/app/meetings/[id]/page.jsx` with real-time state transition (`status: "stopping"`).
+- Users can now manually trigger immediate call wrap-up and start AI transcription on demand with one click.
+- Added 4s polling fallback in `dashboard/src/app/meetings/page.jsx` to guarantee real-time updates without manual page refreshes.
+
