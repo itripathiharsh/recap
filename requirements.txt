@@ -35,7 +35,7 @@ google-auth-oauthlib==1.2.1
 
 # --- Config / env ---
 python-dotenv==1.0.1
-pydantic==2.9.2              # used for schema validation against SCHEMA.md shapes
+pydantic>=2.9.2,<3.0.0        # used for schema validation against SCHEMA.md shapes
 
 # --- API server & database (previously imported by src/ but undeclared here) ---
 fastapi==0.141.1             # src/api.py
