@@ -65,12 +65,12 @@ export async function POST(request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Trigger GitHub Actions on-demand runner (non-blocking)
+    // Trigger GitHub Actions on-demand runner
     const ghToken = process.env.GITHUB_DISPATCH_TOKEN || process.env.GITHUB_TOKEN;
     const ghRepo = process.env.GITHUB_REPO || 'itripathiharsh/recap';
     if (ghToken && data?.id) {
       try {
-        fetch(`https://api.github.com/repos/${ghRepo}/actions/workflows/record_meeting.yml/dispatches`, {
+        const ghRes = await fetch(`https://api.github.com/repos/${ghRepo}/actions/workflows/record_meeting.yml/dispatches`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${ghToken}`,
@@ -83,7 +83,13 @@ export async function POST(request) {
               meeting_id: data.id,
             },
           }),
-        }).catch((err) => console.warn('GitHub dispatch async warning:', err));
+        });
+        if (!ghRes.ok) {
+          const ghErrText = await ghRes.text();
+          console.warn(`GitHub dispatch responded with ${ghRes.status}:`, ghErrText);
+        } else {
+          console.log(`Successfully dispatched GitHub Actions runner for meeting ${data.id}`);
+        }
       } catch (ghErr) {
         console.warn('GitHub dispatch error (non-fatal):', ghErr);
       }
