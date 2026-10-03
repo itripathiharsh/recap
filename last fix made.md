@@ -135,7 +135,16 @@ sequenceDiagram
 - **Fix**:
   1. In `_wait_for_admission`, prioritized `in_call_selectors` check first, moved `"Waiting for the host"` to `waiting_selectors`, and ensured the bot **never aborts or navigates away while waiting in the lobby**.
   2. Changed `page.goto` to `wait_until="domcontentloaded"` with a 3-second DOM stabilization timeout.
-  3. Updated `src/worker.py` to reset `status="joining"` when retrying failed meetings on demand.
+### Fix 12: Premature "Recording" Status & Pre-Join Keystroke Dispatch
+- **Files Modified**: [`src/worker.py`](file:///d:/meet%20recorder/src/worker.py), [`src/join_worker.py`](file:///d:/meet%20recorder/src/join_worker.py).
+- **Issue**:
+  1. `worker.py` set `status="recording"` in Supabase as soon as the worker spun up, causing the dashboard to prematurely display *"Live Recording In Progress - The recap bot is inside the call"* while the runner was still launching Chromium.
+  2. Google Meet's custom input elements did not enable the "Ask to join" button when filled using `loc.fill()`. Playwright's `click(force=True)` clicked the disabled button without submitting the form, leaving the bot stranded on the setup screen.
+  3. `'Ready to join?'` was mistakenly included in `waiting_selectors`. Because `'Ready to join?'` is the pre-join setup screen's heading, the admission loop falsely assumed it was in the lobby and waited 5 minutes instead of submitting the form.
+- **Fix**:
+  1. Updated `worker.py` to set `status="joining"` during the pre-join phase, and only update to `status="recording"` once `join_and_record` confirms admission into the active call.
+  2. Enhanced name input interaction with `page.keyboard.type(bot_name, delay=30)` and `Tab` to trigger native browser keystroke events that activate the "Ask to join" button.
+  3. Removed `'Ready to join?'` from `waiting_selectors` and added fallback Enter key submission if the setup screen remains visible after clicking.
 
 ---
 

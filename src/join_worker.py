@@ -163,13 +163,19 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
         try:
             loc = page.locator(sel)
             if loc.count() > 0 and loc.first.is_visible():
-                loc.first.fill(bot_name)
-                name_filled = True
-                logger.info("Filled bot display name: '%s'", bot_name)
+                loc.first.click()
+                time.sleep(0.2)
+                loc.first.fill("")
+                time.sleep(0.1)
+                page.keyboard.type(bot_name, delay=30)
+                time.sleep(0.4)
+                page.keyboard.press("Tab")
                 time.sleep(0.5)
+                name_filled = True
+                logger.info("Filled bot display name via keyboard typing: '%s'", bot_name)
                 break
-        except Exception:
-            pass
+        except Exception as n_err:
+            logger.warning("Could not fill display name via %s: %s", sel, n_err)
 
     if not name_filled:
         logger.info("No name input required (may be logged in or already set).")
@@ -193,7 +199,9 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
         try:
             loc = page.locator(sel)
             if loc.count() > 0 and loc.first.is_visible():
-                loc.first.click(force=True)
+                # Wait up to 3s for button to be enabled
+                loc.first.wait_for(state="visible", timeout=3000)
+                loc.first.click()
                 clicked = True
                 logger.info("Clicked join button via selector: %s", sel)
                 break
@@ -202,10 +210,10 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
 
     if not clicked:
         try:
-            for name in ["Join now", "Ask to join", "Join"]:
+            for name in ["Ask to join", "Join now", "Join"]:
                 btn = page.get_by_role("button", name=name)
-                if btn.is_visible():
-                    btn.click()
+                if btn.count() > 0 and btn.first.is_visible():
+                    btn.first.click()
                     clicked = True
                     logger.info("Clicked join button via get_by_role('%s')", name)
                     break
@@ -215,6 +223,17 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
     if not clicked:
         logger.warning("Could not locate primary join button with standard selectors; attempting Enter key.")
         page.keyboard.press("Enter")
+
+    time.sleep(1.0)
+    # If still on 'Ready to join?' screen after click, press Enter to submit
+    try:
+        ready_hdr = page.locator("text='Ready to join?'")
+        if ready_hdr.count() > 0 and ready_hdr.first.is_visible():
+            logger.info("'Ready to join?' still visible after click attempt. Pressing Enter to submit join form...")
+            page.keyboard.press("Enter")
+            time.sleep(1.0)
+    except Exception:
+        pass
 
 
 def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_TIMEOUT) -> bool:
@@ -248,7 +267,6 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
         'text="You\'ll join the call when someone lets you in"',
         'text="Waiting for the host"',
         'text="Waiting for host"',
-        'text="Ready to join?"',
         'text="Asking to be let in"',
     ]
 
@@ -433,6 +451,8 @@ def join_and_record(
             # Admitted! Update job status to recording
             logger.info("Admitted to call. Transitioning job %s to 'recording'.", meeting_id)
             update_job_status(meeting_id, JobStatus.RECORDING.value, jobs_dir=j_dir, force=True)
+            from src.supabase_client import db_update_meeting_status
+            db_update_meeting_status(meeting_id=meeting_id, status="recording")
 
             # Pass live Playwright page directly to recorder
             audio_path = start_recording(

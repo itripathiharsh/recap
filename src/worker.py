@@ -94,11 +94,11 @@ def execute_meeting_pipeline(
     # 2. Stage 1: Join & Record
     db_update_meeting_status(
         meeting_id=meeting_id,
-        status="recording",
+        status="joining",
         started_at=datetime.now(timezone.utc).isoformat(),
     )
     if job_id:
-        db_update_job(job_id=job_id, status="recording")
+        db_update_job(job_id=job_id, status="joining")
     db_record_pipeline_stage(meeting_id, "audio_capture", "started")
 
     try:
