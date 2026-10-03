@@ -162,6 +162,24 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
     except Exception:
         pass
 
+    # Dismiss any microphone / camera permission modals ("Continue without microphone and camera")
+    for av_sel in [
+        "button:has-text('Continue without microphone and camera')",
+        "button:has-text('Continue without microphone')",
+        "button:has-text('Allow microphone and camera')",
+        "button[jsname='IbE0S']",
+        "button[jsname='aO7olb']",
+    ]:
+        try:
+            av_btn = page.locator(av_sel)
+            if av_btn.count() > 0 and av_btn.first.is_visible():
+                av_btn.first.click(force=True)
+                time.sleep(0.5)
+                logger.info("Dismissed AV permission prompt via %s.", av_sel)
+                break
+        except Exception:
+            pass
+
     # Fill display name if name input is present
     name_selectors = [
         "input[placeholder*='name' i]",
@@ -191,28 +209,42 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
     if not name_filled:
         logger.info("No name input required (may be logged in or already set).")
 
+    # Dismiss AV modal again in case it appeared after name input or page transition
+    for av_sel in [
+        "button:has-text('Continue without microphone and camera')",
+        "button:has-text('Continue without microphone')",
+        "button[jsname='IbE0S']",
+    ]:
+        try:
+            av_btn = page.locator(av_sel)
+            if av_btn.count() > 0 and av_btn.first.is_visible():
+                av_btn.first.click(force=True)
+                time.sleep(0.4)
+                break
+        except Exception:
+            pass
+
     # Click "Ask to join" or "Join now"
     join_selectors = [
-        "button:has-text('Ask to join')",
         "button:has-text('Join now')",
+        "button:has-text('Ask to join')",
         "button:has-text('Join')",
-        "button[aria-label*='Ask to join' i]",
         "button[aria-label*='Join now' i]",
+        "button[aria-label*='Ask to join' i]",
         "button[aria-label*='Join meeting' i]",
-        "span:has-text('Ask to join')",
         "span:has-text('Join now')",
+        "span:has-text('Ask to join')",
         "button[jsname='Qx7uuf']",
-        "div[role='button']:has-text('Ask to join')",
         "div[role='button']:has-text('Join now')",
+        "div[role='button']:has-text('Ask to join')",
     ]
     clicked = False
     for sel in join_selectors:
         try:
             loc = page.locator(sel)
             if loc.count() > 0 and loc.first.is_visible():
-                # Wait up to 3s for button to be enabled
                 loc.first.wait_for(state="visible", timeout=3000)
-                loc.first.click()
+                loc.first.click(force=True)
                 clicked = True
                 logger.info("Clicked join button via selector: %s", sel)
                 break
@@ -221,10 +253,10 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
 
     if not clicked:
         try:
-            for name in ["Ask to join", "Join now", "Join"]:
+            for name in ["Join now", "Ask to join", "Join"]:
                 btn = page.get_by_role("button", name=name)
                 if btn.count() > 0 and btn.first.is_visible():
-                    btn.first.click()
+                    btn.first.click(force=True)
                     clicked = True
                     logger.info("Clicked join button via get_by_role('%s')", name)
                     break
@@ -298,6 +330,20 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
     last_log_time = 0.0
 
     while time.time() - start_time < timeout_seconds:
+        # Check if AV permission dialog appeared in-call or during connection
+        for av_sel in [
+            "button:has-text('Continue without microphone and camera')",
+            "button:has-text('Continue without microphone')",
+            "button[jsname='IbE0S']",
+        ]:
+            try:
+                btn = page.locator(av_sel)
+                if btn.count() > 0 and btn.first.is_visible():
+                    btn.first.click(force=True)
+                    logger.info("Dismissed in-call AV prompt via %s.", av_sel)
+            except Exception:
+                pass
+
         # 1. Check genuine in-call status FIRST
         for sel in in_call_selectors:
             try:
