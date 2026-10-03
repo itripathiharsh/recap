@@ -6,8 +6,13 @@ mutate a job's status without going through this helper.
 """
 
 from datetime import datetime, timezone
-from enum import StrEnum
 import json
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum
+    class StrEnum(str, Enum):
+        pass
 import logging
 from pathlib import Path
 from typing import Any
