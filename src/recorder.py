@@ -29,7 +29,7 @@ DEFAULT_RECORDINGS_DIR = Path("data/recordings")
 DEFAULT_JOBS_DIR = Path("data/jobs")
 DEFAULT_MAX_MINUTES = int(os.getenv("MAX_RECORDING_MINUTES", "90"))
 MIN_SPEECH_DURATION_SECONDS = 10.0
-SILENCE_TIMEOUT_SECONDS = 120.0  # 2 continuous minutes
+SILENCE_TIMEOUT_SECONDS = float(os.getenv("SILENCE_TIMEOUT_SECONDS", "60.0"))  # 60 seconds of silence
 
 
 class RecordingFailedError(Exception):
@@ -69,6 +69,10 @@ def _check_bot_removed(page: Any) -> bool:
                 page.locator("text='The meeting ended'"),
                 page.locator("text='The call ended'"),
                 page.locator("text='Return to home screen'"),
+                page.locator("text*=\"You're the only one here\""),
+                page.locator("text*=\"Everyone else has left\""),
+                page.locator("text*=\"Everyone else left\""),
+                page.locator("text*=\"No one else is here\""),
             ]
             for loc in removal_locators:
                 try:
@@ -80,6 +84,37 @@ def _check_bot_removed(page: Any) -> bool:
                         return True
                 except Exception:
                     pass
+
+        # Check via DOM JS if participant count is <= 1 (only the bot left)
+        if hasattr(page, "evaluate"):
+            try:
+                is_alone = page.evaluate("""() => {
+                    const text = document.body ? document.body.innerText || '' : '';
+                    if (text.includes("You're the only one here") ||
+                        text.includes("Everyone else has left") ||
+                        text.includes("Everyone else left") ||
+                        text.includes("No one else is here") ||
+                        text.includes("You are the only person")) {
+                        return true;
+                    }
+                    
+                    // Check participant counter in people button
+                    const peopleBtn = document.querySelector("button[aria-label*='Show everyone' i], button[aria-label*='People' i]");
+                    if (peopleBtn) {
+                        const aria = peopleBtn.getAttribute('aria-label') || '';
+                        const match = aria.match(/\\b(\\d+)\\b/);
+                        if (match && parseInt(match[1]) <= 1) {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }""")
+                if is_alone:
+                    logger.warning("Bot is the only participant left in Google Meet; ending recording session.")
+                    return True
+            except Exception:
+                pass
     except Exception as exc:
         logger.warning("Error inspecting page state: %s", exc)
 
@@ -307,8 +342,8 @@ def start_recording(
                 last_silence_end = s_end
                 silence_start_time = None
 
-                # If silence duration >= 120s and speech was already detected, terminate
-                if speech_detected and s_dur >= SILENCE_TIMEOUT_SECONDS:
+                # If silence duration >= SILENCE_TIMEOUT_SECONDS, terminate
+                if s_dur >= SILENCE_TIMEOUT_SECONDS:
                     stop_reason = f"silence_timeout ({s_dur:.1f}s)"
                     logger.info("Silence timeout triggered after %.2fs of silence.", s_dur)
                     break
@@ -316,7 +351,8 @@ def start_recording(
     stderr_thread = threading.Thread(target=monitor_stderr, daemon=True)
     stderr_thread.start()
 
-    # Main control loop: check page removal, duration cap, and silence timeout
+    # Main control loop: check page removal, duration cap, silence timeout, and Supabase status
+    last_db_check = 0.0
     try:
         while process.poll() is None:
             elapsed = time.time() - start_time
@@ -327,22 +363,36 @@ def start_recording(
                 logger.warning("Hit max recording duration cap (%.1f min) for %s.", limit_minutes, meeting_id)
                 break
 
-            # 2. Bot removal check
+            # 2. Bot removal or empty room check
             if _check_bot_removed(page):
                 stop_reason = "removed_from_call"
-                logger.warning("Bot removed from call for %s.", meeting_id)
+                logger.warning("Bot removed or left alone in call for %s.", meeting_id)
                 break
 
             # 3. Stop reason detected in stderr thread
             if stop_reason is not None:
                 break
 
-            # 4. Check if currently in silence that has exceeded 120s since first speech
-            if speech_detected and silence_start_time is not None:
+            # 4. Check if currently in silence that has exceeded threshold
+            if silence_start_time is not None:
                 current_silence_dur = (time.time() - start_time) - silence_start_time
                 if current_silence_dur >= SILENCE_TIMEOUT_SECONDS:
                     stop_reason = f"silence_timeout ({current_silence_dur:.1f}s)"
                     logger.info("Active silence exceeded %.1fs threshold.", SILENCE_TIMEOUT_SECONDS)
+                    break
+
+            # 5. Check if user requested stop via Supabase
+            if time.time() - last_db_check > 5.0:
+                last_db_check = time.time()
+                try:
+                    from src.supabase_client import db_get_meeting
+                    m_data = db_get_meeting(meeting_id)
+                    if m_data and m_data.get("status") in ["stopping", "completed", "cancelled", "stopped"]:
+                        stop_reason = f"user_stopped_via_ui ({m_data.get('status')})"
+                        logger.info("Meeting stopped via Supabase status: %s", m_data.get("status"))
+                        break
+                except Exception:
+                    pass
             # 5. Periodically scan for participant names from the Meet DOM (every 10s) as fallback
             if page and (time.time() - last_participant_scan > 10.0):
                 last_participant_scan = time.time()
