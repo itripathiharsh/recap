@@ -30,6 +30,8 @@ scratch/
 # --- Generated Data ---
 data/recordings/
 data/jobs/
+data/chrome_profile/
+data/google_auth.json
 logs/
 !data/recordings/.gitkeep
 !data/jobs/.gitkeep

@@ -206,3 +206,21 @@ Both configured in Vercel project settings:
      gh run list --limit 5
      gh run view <run_id> --log
      ```
+
+---
+
+## 7. Google Meet WebRTC 403 Forbidden & Session Cookie Solution
+
+### Root Cause Discovered
+When unauthenticated guest browsers attempt to join Google Meet from a cloud datacenter (GitHub Actions Linux VM), Google Meet returns `403 Forbidden` on:
+```
+https://meet.google.com/$rpc/google.rtc.meetings.v1.MeetingDeviceService/CreateMeetingDevice
+```
+This causes an immediate kick to *"You can't join this video call - Return to home screen"*.
+
+### Resolution
+1. Capture authenticated Google session cookies (`SID`, `SAPISID`, etc.) from personal Google account (`harsh1212812@gmail.com`).
+2. Run `.\login.bat` (or `python scratch/login_google.py`).
+3. The script automatically synchronizes with Google Meet, exports `data/google_auth.json`, and uploads it directly to GitHub Actions secret `GOOGLE_SESSION_STATE`.
+4. The cloud runner reads `GOOGLE_SESSION_STATE`, mounts cookies into Playwright Chromium, and passes Google's device verification without getting blocked.
+
