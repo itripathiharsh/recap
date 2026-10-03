@@ -131,8 +131,14 @@ export default function MeetingsPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'mom' }, () => fetchMeetingsData())
       .subscribe();
 
+    // Auto-refresh polling (every 4s) so live meeting changes reflect without manual reload
+    const interval = setInterval(() => {
+      fetchMeetingsData();
+    }, 4000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(interval);
     };
   }, [activeOrgId]);
 
@@ -185,7 +191,7 @@ export default function MeetingsPage() {
       // Status filter
       if (statusFilter !== 'all') {
         if (statusFilter === 'recording') {
-          if (!['recording', 'processing', 'joining'].includes(m.status)) return false;
+          if (!['recording', 'processing', 'joining', 'stopping'].includes(m.status)) return false;
         } else if (m.status !== statusFilter) {
           return false;
         }
@@ -223,6 +229,7 @@ export default function MeetingsPage() {
   const liveMeeting = useMemo(() => {
     return (
       meetings.find((m) => m.status === 'processing') ||
+      meetings.find((m) => m.status === 'stopping') ||
       meetings.find((m) => m.status === 'recording') ||
       meetings.find((m) => m.status === 'joining') ||
       null

@@ -29,7 +29,7 @@ DEFAULT_RECORDINGS_DIR = Path("data/recordings")
 DEFAULT_JOBS_DIR = Path("data/jobs")
 DEFAULT_MAX_MINUTES = int(os.getenv("MAX_RECORDING_MINUTES", "90"))
 MIN_SPEECH_DURATION_SECONDS = 10.0
-SILENCE_TIMEOUT_SECONDS = float(os.getenv("SILENCE_TIMEOUT_SECONDS", "60.0"))  # 60 seconds of silence
+SILENCE_TIMEOUT_SECONDS = float(os.getenv("SILENCE_TIMEOUT_SECONDS", "35.0"))  # 35 seconds of silence
 
 
 class RecordingFailedError(Exception):
@@ -37,13 +37,13 @@ class RecordingFailedError(Exception):
 
 
 def _check_bot_removed(page: Any) -> bool:
-    """Check whether the bot has been removed from the Meet call.
+    """Check whether the bot has been removed or left alone in the Meet call.
 
     Args:
         page: Playwright Page object or None.
 
     Returns:
-        True if removed or page closed, False otherwise.
+        True if removed, page closed, or all participants left; False otherwise.
     """
     if page is None:
         return False
@@ -54,67 +54,83 @@ def _check_bot_removed(page: Any) -> bool:
             return True
 
         if hasattr(page, "url"):
-            current_url = str(page.url)
-            # If redirected away from meet.google.com, call ended or bot was removed
+            current_url = str(page.url).lower()
+            # If redirected away from Google Meet or reverted to the home screen
             if "meet.google.com" not in current_url:
                 logger.warning("Navigated away from Google Meet (%s); treating as call ended.", current_url)
                 return True
+            # Reverted to meet home or landing (e.g. meet.google.com/ or meet.google.com/landing)
+            clean_path = current_url.split("meet.google.com")[-1].split("?")[0].strip("/")
+            if not clean_path or clean_path in ["landing", ""]:
+                logger.warning("Google Meet redirected to landing/home (%s); call ended.", current_url)
+                return True
 
-        # Check for Google Meet removal dialog / call ended text
-        if hasattr(page, "locator"):
-            removal_locators = [
-                page.locator("text='You\\'ve been removed from the meeting'"),
-                page.locator("text='You left the meeting'"),
-                page.locator("text='Someone removed you from the meeting'"),
-                page.locator("text='The meeting ended'"),
-                page.locator("text='The call ended'"),
-                page.locator("text='Return to home screen'"),
-                page.locator("text*=\"You're the only one here\""),
-                page.locator("text*=\"Everyone else has left\""),
-                page.locator("text*=\"Everyone else left\""),
-                page.locator("text*=\"No one else is here\""),
-            ]
-            for loc in removal_locators:
-                try:
-                    if loc.count() > 0:
-                        if hasattr(loc, "first") and hasattr(loc.first, "is_visible"):
-                            if not loc.first.is_visible():
-                                continue
-                        logger.warning("Detected Meet removal/end banner (%s).", loc)
-                        return True
-                except Exception:
-                    pass
-
-        # Check via DOM JS if participant count is <= 1 (only the bot left)
+        # Check via DOM JS for removal banners, empty room signals, or end-of-call state
         if hasattr(page, "evaluate"):
             try:
-                is_alone = page.evaluate("""() => {
-                    const text = document.body ? document.body.innerText || '' : '';
-                    if (text.includes("You're the only one here") ||
-                        text.includes("Everyone else has left") ||
-                        text.includes("Everyone else left") ||
-                        text.includes("No one else is here") ||
-                        text.includes("You are the only person")) {
-                        return true;
-                    }
+                state_signal = page.evaluate("""() => {
+                    const text = (document.body ? document.body.innerText || '' : '').toLowerCase();
                     
-                    // Check participant counter in people button
+                    // 1. Explicit end of call / removal banners
+                    const removalPhrases = [
+                        "you're the only one here",
+                        "everyone else has left",
+                        "everyone else left",
+                        "no one else is here",
+                        "you are the only person",
+                        "the meeting has ended",
+                        "the call ended",
+                        "the call has ended",
+                        "you've been removed from the meeting",
+                        "someone removed you from the meeting",
+                        "someone removed you",
+                        "you left the meeting",
+                        "this video call has ended",
+                        "return to home screen",
+                        "ready to join?",
+                        "check your audio and video"
+                    ];
+                    for (const phrase of removalPhrases) {
+                        if (text.includes(phrase)) {
+                            return 'phrase:' + phrase;
+                        }
+                    }
+
+                    // 2. Participant counter in 'People' / 'Show everyone' button
                     const peopleBtn = document.querySelector("button[aria-label*='Show everyone' i], button[aria-label*='People' i]");
                     if (peopleBtn) {
                         const aria = peopleBtn.getAttribute('aria-label') || '';
                         const match = aria.match(/\\b(\\d+)\\b/);
                         if (match && parseInt(match[1]) <= 1) {
-                            return true;
+                            return 'participant_count_zero_or_one:' + match[1];
                         }
                     }
 
-                    return false;
+                    // 3. Check video tiles in active call: if only 1 (or 0) participant tile remains
+                    const participantTiles = document.querySelectorAll(
+                        'div[data-participant-id], div[data-allocation-index], div[data-requested-participant-id]'
+                    );
+                    const leaveBtn = document.querySelector("button[aria-label*='Leave call' i], button[data-tooltip*='Leave call' i]");
+                    
+                    // If call controls are gone and Rejoin or Return home buttons exist, call is over
+                    const rejoinBtn = document.querySelector("button:has-text('Rejoin'), a[href*='meet.google.com'], button:has-text('Return to home screen')");
+                    if (!leaveBtn && (text.includes("rejoin") || text.includes("return to home screen"))) {
+                        return 'leave_btn_gone_and_rejoin_visible';
+                    }
+
+                    // If inside call but participant tiles count is <= 1
+                    if (leaveBtn && participantTiles.length > 0 && participantTiles.length <= 1) {
+                        return 'tiles_count_le_1';
+                    }
+
+                    return null;
                 }""")
-                if is_alone:
-                    logger.warning("Bot is the only participant left in Google Meet; ending recording session.")
+                if state_signal:
+                    logger.warning("Bot detected Meet termination signal (%s); ending recording session.", state_signal)
                     return True
-            except Exception:
-                pass
+            except Exception as eval_err:
+                logger.debug("Error in Meet DOM evaluation: %s", eval_err)
+
     except Exception as exc:
         logger.warning("Error inspecting page state: %s", exc)
 
@@ -382,7 +398,7 @@ def start_recording(
                     break
 
             # 5. Check if user requested stop via Supabase
-            if time.time() - last_db_check > 5.0:
+            if time.time() - last_db_check > 2.5:
                 last_db_check = time.time()
                 try:
                     from src.supabase_client import db_get_meeting

@@ -494,6 +494,12 @@ def db_upload_recording_audio(meeting_id: str, audio_path: Path) -> str | None:
         return None
 
     try:
+        # Guarantee recordings bucket is public so audio plays in browser
+        try:
+            client.storage.update_bucket("recordings", {"public": True})
+        except Exception:
+            pass
+
         storage_path = f"{meeting_id}/audio.wav"
         with open(audio_path, "rb") as f:
             client.storage.from_("recordings").upload(

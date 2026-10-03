@@ -35,6 +35,7 @@ import {
   Activity,
   AlertCircle,
   Timer,
+  Square,
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { applyWorkspaceScope, useWorkspace } from '../../../lib/workspace';
@@ -288,6 +289,18 @@ export default function MeetingDetailPage() {
     setTimeout(() => setCopyToast(null), 2500);
   };
 
+  const handleStopRecording = async () => {
+    if (!meetingId) return;
+    if (!window.confirm('End recording now and begin transcription and MOM generation?')) return;
+    try {
+      showToast('Ending call and starting AI pipeline...');
+      setMeeting((prev) => (prev ? { ...prev, status: 'stopping' } : null));
+      await supabase.from('meetings').update({ status: 'stopping' }).eq('id', meetingId);
+    } catch (err) {
+      alert('Failed to stop recording. Please try again.');
+    }
+  };
+
   const handleShare = () => {
     if (meeting?.meet_link) {
       navigator.clipboard.writeText(meeting.meet_link);
@@ -378,6 +391,10 @@ export default function MeetingDetailPage() {
     if (meeting?.started_at && meeting?.ended_at) {
       const diff = Math.round((new Date(meeting.ended_at) - new Date(meeting.started_at)) / 60000);
       if (diff > 0) return diff;
+      return 1;
+    }
+    if (duration && duration > 0) {
+      return Math.max(1, Math.round(duration / 60));
     }
     if (meeting?.scheduled_start && meeting?.scheduled_end) {
       const diff = Math.round(
@@ -386,7 +403,7 @@ export default function MeetingDetailPage() {
       if (diff > 0) return diff;
     }
     return null;
-  }, [meeting]);
+  }, [meeting, duration]);
 
   // Derived real metrics
   // A completed meeting with zero speaker turns has zero identified
@@ -599,6 +616,25 @@ export default function MeetingDetailPage() {
 
         {/* Right Header Action Buttons */}
         <div className="md-header-actions">
+          {['recording', 'joining', 'stopping'].includes(meeting.status) && (
+            <button
+              type="button"
+              className="md-btn-outline"
+              disabled={meeting.status === 'stopping'}
+              onClick={handleStopRecording}
+              style={{
+                backgroundColor: meeting.status === 'stopping' ? '#FEF2F2' : '#FFF1F2',
+                color: '#E11D48',
+                borderColor: '#FECDD3',
+                fontWeight: 600,
+              }}
+              title="Stop recording and proceed immediately to AI transcription"
+            >
+              <Square size={11} fill="#E11D48" aria-hidden="true" />
+              <span>{meeting.status === 'stopping' ? 'Stopping...' : 'End & Process'}</span>
+            </button>
+          )}
+
           <button type="button" className="md-btn-outline" onClick={handleShare}>
             <Share2 size={13} aria-hidden="true" />
             <span>Share</span>
@@ -853,6 +889,16 @@ export default function MeetingDetailPage() {
                       </div>
                       <div className="md-hero-status-desc">
                         The bot is currently capturing audio. Processing starts upon completion.
+                      </div>
+                    </>
+                  ) : meeting.status === 'stopping' ? (
+                    <>
+                      <div className="md-hero-status-heading">
+                        <Activity size={15} color="#E11D48" />
+                        <span>Stopping recording</span>
+                      </div>
+                      <div className="md-hero-status-desc">
+                        Finalizing audio capture and launching speech-to-text pipeline...
                       </div>
                     </>
                   ) : meeting.status === 'processing' ? (

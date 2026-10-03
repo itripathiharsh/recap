@@ -227,17 +227,23 @@ export default function ProcessingProgress({ meeting }) {
   }, [activeStage, averages]);
 
   /* ----------------------------------------------------------- recording */
-  if (status === 'recording' || status === 'joining') {
+  if (status === 'recording' || status === 'joining' || status === 'stopping') {
     return (
       <div className="pp-rec">
         <div className="pp-rec-pulse" aria-hidden="true" />
         <div className="pp-rec-text">
           <div className="pp-rec-title">
-            {status === 'joining' ? 'Joining Meeting' : 'Live Recording In Progress'}
+            {status === 'joining'
+              ? 'Joining Meeting'
+              : status === 'stopping'
+              ? 'Stopping & Preparing Processing'
+              : 'Live Recording In Progress'}
           </div>
           <div className="pp-rec-sub">
             {status === 'joining'
               ? 'The recap bot is joining the call.'
+              : status === 'stopping'
+              ? 'Stopping audio capture and launching speech-to-text pipeline...'
               : 'The recap bot is inside the call capturing audio.'}
           </div>
         </div>

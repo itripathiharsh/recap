@@ -123,7 +123,12 @@ def execute_meeting_pipeline(
         return False
 
     # 3. Stage 2: STT (faster-whisper)
-    db_update_meeting_status(meeting_id=meeting_id, status="processing")
+    call_ended_at = datetime.now(timezone.utc).isoformat()
+    db_update_meeting_status(
+        meeting_id=meeting_id,
+        status="processing",
+        ended_at=call_ended_at,
+    )
     if job_id:
         db_update_job(job_id=job_id, status="transcribing")
     db_record_pipeline_stage(meeting_id, "transcription", "started")
