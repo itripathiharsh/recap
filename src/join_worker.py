@@ -162,7 +162,17 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
     except Exception:
         pass
 
-    # Dismiss any microphone / camera permission modals ("Continue without microphone and camera")
+    # Dismiss any microphone / camera permission modals ("Continue without microphone and camera") via JS and locator
+    try:
+        page.evaluate('''() => {
+            const btns = Array.from(document.querySelectorAll('button'));
+            const av = btns.find(b => b.innerText.toLowerCase().includes('continue without') || b.getAttribute('jsname') === 'IbE0S');
+            if (av) av.click();
+        }''')
+        time.sleep(0.5)
+    except Exception:
+        pass
+
     for av_sel in [
         "button:has-text('Continue without microphone and camera')",
         "button:has-text('Continue without microphone')",
@@ -209,47 +219,62 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
     if not name_filled:
         logger.info("No name input required (may be logged in or already set).")
 
-    # Dismiss AV modal again in case it appeared after name input or page transition
-    for av_sel in [
-        "button:has-text('Continue without microphone and camera')",
-        "button:has-text('Continue without microphone')",
-        "button[jsname='IbE0S']",
-    ]:
-        try:
-            av_btn = page.locator(av_sel)
-            if av_btn.count() > 0 and av_btn.first.is_visible():
-                av_btn.first.click(force=True)
-                time.sleep(0.4)
-                break
-        except Exception:
-            pass
+    # Dismiss AV modal again via JS in case it re-appeared
+    try:
+        page.evaluate('''() => {
+            const btns = Array.from(document.querySelectorAll('button'));
+            const av = btns.find(b => b.innerText.toLowerCase().includes('continue without') || b.getAttribute('jsname') === 'IbE0S');
+            if (av) av.click();
+        }''')
+        time.sleep(0.4)
+    except Exception:
+        pass
 
-    # Click "Ask to join" or "Join now"
-    join_selectors = [
-        "button:has-text('Join now')",
-        "button:has-text('Ask to join')",
-        "button:has-text('Join')",
-        "button[aria-label*='Join now' i]",
-        "button[aria-label*='Ask to join' i]",
-        "button[aria-label*='Join meeting' i]",
-        "span:has-text('Join now')",
-        "span:has-text('Ask to join')",
-        "button[jsname='Qx7uuf']",
-        "div[role='button']:has-text('Join now')",
-        "div[role='button']:has-text('Ask to join')",
-    ]
+    # Click "Ask to join" or "Join now" — First attempt via DOM JS to bypass pointer interception
     clicked = False
-    for sel in join_selectors:
-        try:
-            loc = page.locator(sel)
-            if loc.count() > 0 and loc.first.is_visible():
-                loc.first.wait_for(state="visible", timeout=3000)
-                loc.first.click(force=True)
-                clicked = True
-                logger.info("Clicked join button via selector: %s", sel)
-                break
-        except Exception:
-            pass
+    try:
+        clicked_text = page.evaluate('''() => {
+            const btns = Array.from(document.querySelectorAll('button, div[role="button"]'));
+            const join = btns.find(b => {
+                const t = b.innerText ? b.innerText.toLowerCase() : '';
+                return t.includes('join now') || t.includes('ask to join');
+            });
+            if (join) {
+                join.click();
+                return join.innerText.trim();
+            }
+            return null;
+        }''')
+        if clicked_text:
+            clicked = True
+            logger.info("Clicked join button via DOM JS: '%s'", clicked_text)
+    except Exception as js_err:
+        logger.warning("DOM JS click attempt: %s", js_err)
+
+    if not clicked:
+        join_selectors = [
+            "button:has-text('Join now')",
+            "button:has-text('Ask to join')",
+            "button:has-text('Join')",
+            "button[aria-label*='Join now' i]",
+            "button[aria-label*='Ask to join' i]",
+            "button[aria-label*='Join meeting' i]",
+            "span:has-text('Join now')",
+            "span:has-text('Ask to join')",
+            "button[jsname='Qx7uuf']",
+            "div[role='button']:has-text('Join now')",
+            "div[role='button']:has-text('Ask to join')",
+        ]
+        for sel in join_selectors:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    loc.first.click(force=True)
+                    clicked = True
+                    logger.info("Clicked join button via selector: %s", sel)
+                    break
+            except Exception:
+                pass
 
     if not clicked:
         try:
@@ -343,6 +368,18 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
                     logger.info("Dismissed in-call AV prompt via %s.", av_sel)
             except Exception:
                 pass
+
+        # Check genuine in-call status via DOM JS (leave call button)
+        try:
+            in_call_js = page.evaluate('''() => {
+                const leave = document.querySelector("button[aria-label*='Leave call' i], button[aria-label*='Leave meeting' i], button[jsname='CQy0Sc']");
+                return leave !== null;
+            }''')
+            if in_call_js:
+                logger.info("Successfully admitted to meeting call (matched in-call leave button via JS).")
+                return True
+        except Exception:
+            pass
 
         # 1. Check genuine in-call status FIRST
         for sel in in_call_selectors:
