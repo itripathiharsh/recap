@@ -423,6 +423,28 @@ def join_and_record(
         )
         page = context.pages[0] if len(context.pages) > 0 else context.new_page()
 
+        # Load authenticated Google session if available
+        auth_file = Path("data/google_auth.json")
+        auth_env = os.getenv("GOOGLE_SESSION_STATE")
+        if auth_env and not auth_file.exists():
+            try:
+                import base64
+                auth_file.parent.mkdir(parents=True, exist_ok=True)
+                auth_file.write_bytes(base64.b64decode(auth_env))
+            except Exception as b64_err:
+                logger.warning("Could not decode GOOGLE_SESSION_STATE: %s", b64_err)
+
+        if auth_file.exists():
+            try:
+                with open(auth_file, "r", encoding="utf-8") as f:
+                    state_data = json.load(f)
+                cookies = state_data.get("cookies", [])
+                if cookies:
+                    context.add_cookies(cookies)
+                    logger.info("Loaded %d authenticated Google session cookies into browser context.", len(cookies))
+            except Exception as auth_err:
+                logger.warning("Could not load Google session cookies: %s", auth_err)
+
         # Stealth: Remove navigator.webdriver and add Chrome runtime/languages/plugins
         try:
             context.add_init_script("""
