@@ -225,13 +225,25 @@ export default function MeetingsPage() {
   }, [meetings, selectedMeetingId]);
 
   // The one meeting currently mid-pipeline (joining / recording / processing).
-  // ProcessingProgress decides what to render; this only picks the meeting.
+  // Excludes stale/orphaned meetings that failed long ago so banners don't persist indefinitely.
   const liveMeeting = useMemo(() => {
+    const now = Date.now();
+    const isLive = (m) => {
+      if (!m) return false;
+      const refTime = Date.parse(m.started_at || m.created_at || 0);
+      const ageMs = now - refTime;
+      if (m.status === 'joining' && ageMs > 5 * 60 * 1000) return false;
+      if (m.status === 'stopping' && ageMs > 3 * 60 * 1000) return false;
+      if (m.status === 'processing' && ageMs > 30 * 60 * 1000) return false;
+      if (m.status === 'recording' && ageMs > 120 * 60 * 1000) return false;
+      return true;
+    };
+
     return (
-      meetings.find((m) => m.status === 'processing') ||
-      meetings.find((m) => m.status === 'stopping') ||
-      meetings.find((m) => m.status === 'recording') ||
-      meetings.find((m) => m.status === 'joining') ||
+      meetings.find((m) => m.status === 'processing' && isLive(m)) ||
+      meetings.find((m) => m.status === 'stopping' && isLive(m)) ||
+      meetings.find((m) => m.status === 'recording' && isLive(m)) ||
+      meetings.find((m) => m.status === 'joining' && isLive(m)) ||
       null
     );
   }, [meetings]);

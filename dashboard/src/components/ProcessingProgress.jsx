@@ -12,6 +12,7 @@ import {
   Sparkles,
   Send,
   Radio,
+  X,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { applyWorkspaceScope, useWorkspace } from '../lib/workspace';
@@ -95,9 +96,17 @@ export default function ProcessingProgress({ meeting }) {
   const [rows, setRows] = useState(null); // null = not loaded yet
   const [averages, setAverages] = useState(null);
   const [now, setNow] = useState(() => Date.now());
+  const [dismissed, setDismissed] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => () => { mounted.current = false; }, []);
+
+  // Stale guard: never show persistent banners for crashed/abandoned meetings
+  const ageMs = Date.now() - Date.parse(meeting?.started_at || meeting?.created_at || 0);
+  const isStale =
+    (status === 'joining' && ageMs > 5 * 60 * 1000) ||
+    (status === 'stopping' && ageMs > 3 * 60 * 1000) ||
+    (status === 'processing' && ageMs > 30 * 60 * 1000);
 
   /* ------------------------------------------------- live "now" heartbeat */
   useEffect(() => {
@@ -227,26 +236,50 @@ export default function ProcessingProgress({ meeting }) {
   }, [activeStage, averages]);
 
   /* ----------------------------------------------------------- recording */
+  if (dismissed || isStale) return null;
+
   if (status === 'recording' || status === 'joining' || status === 'stopping') {
     return (
-      <div className="pp-rec">
-        <div className="pp-rec-pulse" aria-hidden="true" />
-        <div className="pp-rec-text">
-          <div className="pp-rec-title">
-            {status === 'joining'
-              ? 'Joining Meeting'
-              : status === 'stopping'
-              ? 'Stopping & Preparing Processing'
-              : 'Live Recording In Progress'}
-          </div>
-          <div className="pp-rec-sub">
-            {status === 'joining'
-              ? 'The recap bot is joining the call.'
-              : status === 'stopping'
-              ? 'Stopping audio capture and launching speech-to-text pipeline...'
-              : 'The recap bot is inside the call capturing audio.'}
+      <div className="pp-rec" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="pp-rec-pulse" aria-hidden="true" />
+          <div className="pp-rec-text">
+            <div className="pp-rec-title">
+              {status === 'joining'
+                ? 'Joining Meeting'
+                : status === 'stopping'
+                ? 'Stopping & Preparing Processing'
+                : 'Live Recording In Progress'}
+            </div>
+            <div className="pp-rec-sub">
+              {status === 'joining'
+                ? 'The recap bot is joining the call.'
+                : status === 'stopping'
+                ? 'Stopping audio capture and launching speech-to-text pipeline...'
+                : 'The recap bot is inside the call capturing audio.'}
+            </div>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => setDismissed(true)}
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: '6px',
+            color: '#991B1B',
+            opacity: 0.7,
+            borderRadius: '4px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          title="Dismiss banner"
+          aria-label="Dismiss banner"
+        >
+          <X size={15} />
+        </button>
       </div>
     );
   }

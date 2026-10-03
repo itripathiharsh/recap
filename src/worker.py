@@ -47,6 +47,34 @@ logger = logging.getLogger("worker")
 MAX_RETRIES = 2
 
 
+def reap_stale_meetings(exclude_meeting_id: str | None = None) -> None:
+    """Auto-fail orphaned meetings left in intermediate states (>8 min ago)."""
+    try:
+        from src.supabase_client import get_supabase_client
+        client = get_supabase_client()
+        if not client:
+            return
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=8)).isoformat()
+        query = (
+            client.table("meetings")
+            .select("id, title, status")
+            .in_("status", ["joining", "stopping"])
+            .lt("created_at", cutoff)
+        )
+        if exclude_meeting_id:
+            query = query.neq("id", exclude_meeting_id)
+        res = query.execute()
+        for row in (res.data or []):
+            logger.info("Reaping orphaned meeting %s ('%s', status=%s)", row["id"], row.get("title"), row["status"])
+            client.table("meetings").update({
+                "status": "failed",
+                "error_message": "Session expired: join attempt or runner timed out.",
+            }).eq("id", row["id"]).execute()
+    except Exception as exc:
+        logger.debug("Stale meeting reaper notice: %s", exc)
+
+
 def execute_meeting_pipeline(
     meeting: dict[str, Any],
     jobs_dir: Path = Path("data/jobs"),
@@ -71,6 +99,7 @@ def execute_meeting_pipeline(
     duration = int(meeting.get("expected_duration_minutes", 30))
 
     logger.info("Starting pipeline for meeting: %s (%s)", title, meeting_id)
+    reap_stale_meetings(exclude_meeting_id=meeting_id)
 
     # 1. Initialize local safety job & Supabase job
     jobs_dir.mkdir(parents=True, exist_ok=True)
