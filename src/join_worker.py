@@ -420,17 +420,7 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
             time.sleep(2)
             continue
 
-        # 4. If not in call, not rejected, and not in waiting room, check if room is locked/host absent
-        try:
-            no_one = page.locator("text='No one can join a meeting unless invited or admitted by the host'")
-            if no_one.count() > 0 and no_one.first.is_visible():
-                raise HostNotPresentError("Host has not entered the meeting room yet")
-        except HostNotPresentError:
-            raise
-        except Exception:
-            pass
-
-        time.sleep(2)
+        time.sleep(1.5)
 
     raise JoinFailedError(f"Timed out waiting for admission into meeting (>{int(timeout_seconds/60)} min).")
 
@@ -548,12 +538,6 @@ def join_and_record(
                     logger.info("Navigating to %s (waiting for host, elapsed: %.0fs/%.0fs)...", meet_link, time.time() - start_wait, admission_timeout)
                     page.goto(meet_link, wait_until="domcontentloaded", timeout=45000)
                     page.wait_for_timeout(3000)
-
-                    # Check if host not present on landing
-                    if page.locator("text='No one can join a meeting unless invited or admitted by the host'").count() > 0 and page.locator("text='No one can join a meeting unless invited or admitted by the host'").first.is_visible():
-                        logger.info("Host has not entered Google Meet room yet. Waiting 12s before re-checking...")
-                        time.sleep(12)
-                        continue
 
                     _handle_prejoin_page(page, display_name)
 
