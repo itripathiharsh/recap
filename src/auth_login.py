@@ -18,7 +18,8 @@ from playwright.sync_api import sync_playwright
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("auth_login")
 
-PROFILE_DIR = Path("/mnt/d/meet recorder/.temp/chrome_profile")
+from src.config import DEV_TEMP
+PROFILE_DIR = DEV_TEMP / "chrome_profile"
 DISPLAY = ":99"
 NOVNC_PORT = 6080
 VNC_PORT = 5900

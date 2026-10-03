@@ -298,3 +298,43 @@ def execute_meeting_pipeline(
     )
     logger.info("Pipeline completed successfully for meeting: %s", meeting_id)
     return True
+
+
+def run_meeting_by_id(meeting_id: str) -> bool:
+    """Fetch meeting by ID from Supabase, atomically claim it, and run the pipeline."""
+    from src.supabase_client import db_get_meeting, db_claim_meeting
+    meeting = db_get_meeting(meeting_id)
+    if not meeting:
+        logger.error("Meeting %s not found in Supabase.", meeting_id)
+        return False
+
+    status = meeting.get("status")
+    if status in ("scheduled", "queued"):
+        claimed = db_claim_meeting(meeting_id, target_status="joining")
+        if not claimed:
+            logger.warning("Could not atomically claim meeting %s (may already be in progress).", meeting_id)
+
+    return execute_meeting_pipeline(meeting)
+
+
+def main() -> None:
+    """CLI entrypoint for executing meeting pipeline directly or one-shot."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Recap Meeting Execution Worker")
+    parser.add_argument("--meeting-id", help="UUID of meeting to execute directly")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+    if args.meeting_id:
+        success = run_meeting_by_id(args.meeting_id)
+        sys.exit(0 if success else 1)
+    else:
+        from src.scheduler import SchedulerDaemon
+        daemon = SchedulerDaemon()
+        daemon.check_and_execute_upcoming()
+
+
+if __name__ == "__main__":
+    main()
+

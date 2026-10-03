@@ -47,7 +47,8 @@ def _ensure_display_and_audio(visible: bool = False) -> None:
         # Native Windows - no Xvfb or Linux PulseAudio needed
         return
 
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/mnt/d/meet recorder/.temp/ms-playwright"
+    from src.config import DEV_TEMP
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(DEV_TEMP / "ms-playwright"))
 
     # Ensure PULSE_SERVER points to valid socket if WSLg
     if Path("/mnt/wslg/PulseServer").exists():
@@ -347,7 +348,8 @@ def join_and_record(
 
     logger.info("Launching browser for meeting %s (target: %s, visible=%s)...", meeting_id, meet_link, visible)
 
-    profile_dir = Path("D:/meet recorder/.temp/chrome_profile") if sys.platform == "win32" else Path("/mnt/d/meet recorder/.temp/chrome_profile")
+    from src.config import DEV_TEMP
+    profile_dir = DEV_TEMP / "chrome_profile"
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:

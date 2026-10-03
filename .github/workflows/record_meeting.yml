@@ -1,0 +1,97 @@
+name: Record Google Meet (On-Demand Cloud Worker)
+
+on:
+  workflow_dispatch:
+    inputs:
+      meeting_id:
+        description: "UUID of the meeting to record (optional - if blank, checks for upcoming/queued meetings)"
+        required: false
+        type: string
+  repository_dispatch:
+    types: [record_meeting]
+  schedule:
+    # Optional fallback cron: checks every 10 minutes for any scheduled meetings
+    - cron: '*/10 * * * *'
+
+concurrency:
+  group: meeting-recorder-${{ github.event.inputs.meeting_id || github.event.client_payload.meeting_id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  execute-meeting:
+    name: Run Meeting Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      DISPLAY: ":99"
+      PYTHONUNBUFFERED: "1"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GROQ_API_KEY_2: ${{ secrets.GROQ_API_KEY_2 }}
+      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+      BOT_DISPLAY_NAME: ${{ secrets.BOT_DISPLAY_NAME }}
+      DEFAULT_USER_NAME: ${{ secrets.DEFAULT_USER_NAME }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install System Audio, Display & Media Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            pulseaudio \
+            pulseaudio-utils \
+            xvfb \
+            libasound2
+
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Python Dependencies & Playwright
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==2.4.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Initialize Virtual Display & PulseAudio Loopback
+        run: |
+          echo "Starting Xvfb virtual display on :99..."
+          Xvfb :99 -screen 0 1920x1080x24 -ac &
+          sleep 1
+
+          echo "Initializing PulseAudio virtual audio sink..."
+          pulseaudio --start --exit-idle-time=-1
+          sleep 1
+          pactl load-module module-null-sink sink_name=VirtualSink sink_properties=device.description=VirtualSink
+          pactl set-default-sink VirtualSink
+          pactl list short sinks
+
+      - name: Execute Meeting Pipeline
+        run: |
+          TARGET_MID="${{ github.event.inputs.meeting_id || github.event.client_payload.meeting_id }}"
+
+          if [ -n "$TARGET_MID" ]; then
+            echo "Executing target meeting by ID: $TARGET_MID"
+            python -m src.worker --meeting-id "$TARGET_MID"
+          else
+            echo "Running one-shot scheduler check for upcoming/queued meetings..."
+            python -m src.scheduler --once --lookahead 12
+          fi

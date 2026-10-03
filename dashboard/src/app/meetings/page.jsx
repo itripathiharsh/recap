@@ -51,6 +51,8 @@ export default function MeetingsPage() {
   const [favorites, setFavorites] = useState(new Set());
   const [completedActions, setCompletedActions] = useState(new Set());
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [dispatchingId, setDispatchingId] = useState(null);
+  const [dispatchMessage, setDispatchMessage] = useState(null);
 
   // Audio player state
   const audioRef = useRef(null);
@@ -279,6 +281,35 @@ export default function MeetingsPage() {
     } catch (err) {
       console.error('Failed to delete meeting:', err);
       alert('Failed to delete meeting. Please try again.');
+    }
+  };
+
+  const handleDispatchBot = async (meetingId) => {
+    try {
+      setDispatchingId(meetingId);
+      setDispatchMessage(null);
+      const res = await fetch(`/api/meetings/${meetingId}/dispatch`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to dispatch bot runner');
+      }
+      setDispatchMessage({
+        type: 'success',
+        text: data.message || 'Bot cloud runner dispatched via GitHub Actions! It will join shortly.',
+      });
+      setTimeout(() => setDispatchMessage(null), 8000);
+      fetchMeetingsData();
+    } catch (err) {
+      console.error('Dispatch failed:', err);
+      setDispatchMessage({
+        type: 'error',
+        text: err.message || 'Failed to dispatch bot runner',
+      });
+      setTimeout(() => setDispatchMessage(null), 8000);
+    } finally {
+      setDispatchingId(null);
     }
   };
 
@@ -895,6 +926,31 @@ export default function MeetingsPage() {
                 </div>
 
                 <div className="detail-header-actions">
+                  {['scheduled', 'queued', 'failed'].includes(currentMeeting.status) && (
+                    <button
+                      type="button"
+                      onClick={() => handleDispatchBot(currentMeeting.id)}
+                      disabled={dispatchingId === currentMeeting.id}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        fontSize: '12.5px',
+                        fontWeight: 600,
+                        borderRadius: '6px',
+                        backgroundColor: dispatchingId === currentMeeting.id ? '#94A3B8' : '#0066FF',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        cursor: dispatchingId === currentMeeting.id ? 'not-allowed' : 'pointer',
+                        transition: 'background-color 150ms ease',
+                      }}
+                      title="Trigger GitHub Actions Cloud Runner to join this meeting immediately"
+                    >
+                      <Play size={13} fill="#FFFFFF" />
+                      <span>{dispatchingId === currentMeeting.id ? 'Dispatching...' : 'Join Call Now'}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     className={`detail-icon-btn ${favorites.has(currentMeeting.id) ? 'starred' : ''}`}
@@ -922,6 +978,40 @@ export default function MeetingsPage() {
                   </button>
                 </div>
               </div>
+
+              {dispatchMessage && (
+                <div
+                  style={{
+                    padding: '8px 14px',
+                    margin: '8px 0 12px 0',
+                    borderRadius: '6px',
+                    fontSize: '12.5px',
+                    lineHeight: '1.4',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    backgroundColor: dispatchMessage.type === 'success' ? '#F0FDF4' : '#FEF2F2',
+                    color: dispatchMessage.type === 'success' ? '#166534' : '#991B1B',
+                    border: `1px solid ${dispatchMessage.type === 'success' ? '#BBF7D0' : '#FECACA'}`,
+                  }}
+                >
+                  <span>{dispatchMessage.text}</span>
+                  <button
+                    type="button"
+                    onClick={() => setDispatchMessage(null)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      color: 'inherit',
+                      padding: '0 4px',
+                    }}
+                  >
+                    &times;
+                  </button>
+                </div>
+              )}
 
               {/* Tabs Bar */}
               <div className="detail-tabs-bar">

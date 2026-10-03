@@ -217,10 +217,8 @@ def start_recording(
 
     # Explicitly ensure D: temp is inherited by ffmpeg (platform-aware)
     env = os.environ.copy()
-    if os.name == "nt":
-        temp_dir = Path("D:/meet recorder/.temp")
-    else:
-        temp_dir = Path("/mnt/d/meet recorder/.temp")
+    from src.config import DEV_TEMP
+    temp_dir = DEV_TEMP
     temp_dir.mkdir(parents=True, exist_ok=True)
     env["TEMP"] = str(temp_dir)
     env["TMP"] = str(temp_dir)
