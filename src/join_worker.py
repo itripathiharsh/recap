@@ -5,6 +5,7 @@ handles pre-join permissions/mutes, waits for admission, and triggers audio reco
 """
 
 import argparse
+import json
 import logging
 import os
 from pathlib import Path
