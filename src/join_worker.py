@@ -152,10 +152,21 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
     except Exception as exc:
         logger.warning("Could not send mute shortcuts: %s", exc)
 
+    # Dismiss "Got it" sign-in tooltip if present
+    try:
+        got_it = page.locator("button:has-text('Got it'), button[aria-label*='Got it' i]")
+        if got_it.count() > 0 and got_it.first.is_visible():
+            got_it.first.click()
+            time.sleep(0.3)
+            logger.info("Dismissed Google sign-in tooltip.")
+    except Exception:
+        pass
+
     # Fill display name if name input is present
     name_selectors = [
-        "input[aria-label='Your name']",
         "input[placeholder*='name' i]",
+        "input[aria-label*='name' i]",
+        "input[aria-label='Your name']",
         "input[type='text']",
     ]
     name_filled = False
@@ -412,9 +423,14 @@ def join_and_record(
         )
         page = context.pages[0] if len(context.pages) > 0 else context.new_page()
 
-        # Stealth: Remove navigator.webdriver flag
+        # Stealth: Remove navigator.webdriver and add Chrome runtime/languages/plugins
         try:
-            context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                window.navigator.chrome = { runtime: {} };
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+            """)
         except Exception as st_err:
             logger.warning("Could not add webdriver stealth script: %s", st_err)
 
