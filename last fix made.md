@@ -126,9 +126,16 @@ sequenceDiagram
   The bot previously had `text="You can't join this video call"` in its `rejection_selectors`, causing the bot to misinterpret the absence of the host as a fatal user rejection and exit in 2 seconds.
 - **Fix**:
   1. Created `HostNotPresentError(Exception)` and separated host absence messages from actual human rejections (`"Someone in the call denied your request"`).
-  2. Wrapped `join_and_record` in a patient polling loop: if the host is not yet in the room, the bot logs `"Host has not entered Google Meet room yet. Waiting 12s before re-checking..."` and reloads/checks for up to 5 minutes (`admission_timeout`).
-  3. Added Playwright stealth script removing `navigator.webdriver`.
-
+### Fix 11: Waiting Room False Abort & Networkidle Timeout
+- **Files Modified**: [`src/join_worker.py`](file:///d:/meet%20recorder/src/join_worker.py), [`src/worker.py`](file:///d:/meet%20recorder/src/worker.py).
+- **Issue**:
+  1. In `src/join_worker.py`, `'text="Waiting for the host"'` and `'text="Waiting for host"'` were incorrectly included in `host_not_present_selectors`. When the bot clicked **"Ask to join"**, Google Meet placed the bot in the lobby showing *"Waiting for the host to let you in"*. Because `host_not_present_selectors` matched this lobby string, the bot mistakenly concluded the host was absent, aborted the waiting room after 2 seconds, and reloaded the page — effectively cancelling its own knock!
+  2. In Google Meet, `wait_until="networkidle"` timed out at 45 seconds because Google Meet maintains continuous WebSockets/WebRTC network streams.
+  3. When retrying a `failed` meeting via "Join Call Now", `worker.py` did not update status to `joining`.
+- **Fix**:
+  1. In `_wait_for_admission`, prioritized `in_call_selectors` check first, moved `"Waiting for the host"` to `waiting_selectors`, and ensured the bot **never aborts or navigates away while waiting in the lobby**.
+  2. Changed `page.goto` to `wait_until="domcontentloaded"` with a 3-second DOM stabilization timeout.
+  3. Updated `src/worker.py` to reset `status="joining"` when retrying failed meetings on demand.
 
 ---
 

@@ -313,6 +313,9 @@ def run_meeting_by_id(meeting_id: str) -> bool:
         claimed = db_claim_meeting(meeting_id, target_status="joining")
         if not claimed:
             logger.warning("Could not atomically claim meeting %s (may already be in progress).", meeting_id)
+    elif status == "failed":
+        from src.supabase_client import db_update_meeting_status
+        db_update_meeting_status(meeting_id, status="joining", error_message=None)
 
     return execute_meeting_pipeline(meeting)
 

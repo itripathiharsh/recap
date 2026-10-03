@@ -238,17 +238,10 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
         'text="Someone in the call denied your request"',
         'text="You\'ve been removed from the meeting"',
         'text="Someone removed you from the meeting"',
+        'text="You can\'t join this meeting"',
     ]
 
-    # Host not present indicators — the host has simply not arrived or opened the room yet
-    host_not_present_selectors = [
-        'text="No one can join a meeting unless invited or admitted by the host"',
-        'text="Waiting for the host"',
-        'text="Waiting for host"',
-        'text="Returning to home screen in"',
-    ]
-
-    # Waiting-room indicators — if ANY of these are visible, we are still waiting to be admitted
+    # Waiting-room indicators — if ANY of these are visible, we are waiting for the host to admit us!
     waiting_selectors = [
         'text="Asking to join"',
         'text="Someone should let you in shortly"',
@@ -256,6 +249,7 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
         'text="Waiting for the host"',
         'text="Waiting for host"',
         'text="Ready to join?"',
+        'text="Asking to be let in"',
     ]
 
     # In-call indicator selectors — ONLY visible when actually inside an active call
@@ -264,20 +258,24 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
         "button[aria-label*='People' i]",
         "button[aria-label*='Chat with everyone' i]",
         "button[aria-label*='Raise hand' i]",
+        "button[aria-label*='Leave call' i]",
+        "button[aria-label*='Leave meeting' i]",
         "div[data-allocation-index]",
         "div[data-participant-id]",
+        "div[data-meeting-title]",
+        "button[data-is-muted]",
     ]
 
     last_log_time = 0.0
 
     while time.time() - start_time < timeout_seconds:
-        # 1. Check if meeting is waiting for host to enter
-        for sel in host_not_present_selectors:
+        # 1. Check genuine in-call status FIRST
+        for sel in in_call_selectors:
             try:
-                if page.locator(sel).count() > 0 and page.locator(sel).first.is_visible():
-                    raise HostNotPresentError("Host has not entered the meeting room yet")
-            except HostNotPresentError:
-                raise
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    logger.info("Successfully admitted to meeting call (matched in-call element: %s).", sel)
+                    return True
             except Exception:
                 pass
 
@@ -291,19 +289,7 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
             except Exception:
                 pass
 
-        # 3. Check generic 'You can\'t join this video call'
-        try:
-            cant_join = page.locator('text="You can\'t join this video call"')
-            if cant_join.count() > 0 and cant_join.first.is_visible():
-                if page.locator('text="No one can join"').count() > 0:
-                    raise HostNotPresentError("Host has not entered the meeting room yet")
-                raise HostNotPresentError("Meeting room is waiting for host to arrive or admit")
-        except (HostNotPresentError, JoinFailedError):
-            raise
-        except Exception:
-            pass
-
-        # 2. Check if still in waiting room
+        # 3. Check if waiting in lobby / waiting room
         is_still_waiting = False
         for sel in waiting_selectors:
             try:
@@ -322,19 +308,20 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
             time.sleep(2)
             continue
 
-        # 3. Check genuine in-call status (only valid when NOT in waiting room)
-        for sel in in_call_selectors:
-            try:
-                loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    logger.info("Successfully admitted to meeting call (matched in-call element: %s).", sel)
-                    return True
-            except Exception:
-                pass
+        # 4. If not in call, not rejected, and not in waiting room, check if room is locked/host absent
+        try:
+            no_one = page.locator("text='No one can join a meeting unless invited or admitted by the host'")
+            if no_one.count() > 0 and no_one.first.is_visible():
+                raise HostNotPresentError("Host has not entered the meeting room yet")
+        except HostNotPresentError:
+            raise
+        except Exception:
+            pass
 
         time.sleep(2)
 
     raise JoinFailedError(f"Timed out waiting for admission into meeting (>{int(timeout_seconds/60)} min).")
+
 
 
 def join_and_record(
@@ -420,7 +407,8 @@ def join_and_record(
             while time.time() - start_wait < admission_timeout:
                 try:
                     logger.info("Navigating to %s (waiting for host, elapsed: %.0fs/%.0fs)...", meet_link, time.time() - start_wait, admission_timeout)
-                    page.goto(meet_link, wait_until="networkidle", timeout=45000)
+                    page.goto(meet_link, wait_until="domcontentloaded", timeout=45000)
+                    page.wait_for_timeout(3000)
 
                     # Check if host not present on landing
                     if page.locator("text='No one can join a meeting unless invited or admitted by the host'").count() > 0 and page.locator("text='No one can join a meeting unless invited or admitted by the host'").first.is_visible():
