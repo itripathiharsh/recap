@@ -48,7 +48,11 @@ def _ensure_display_and_audio(visible: bool = False) -> None:
         return
 
     from src.config import DEV_TEMP
-    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(DEV_TEMP / "ms-playwright"))
+    if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
+        if (Path.home() / ".cache" / "ms-playwright").exists():
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(Path.home() / ".cache" / "ms-playwright")
+        else:
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(DEV_TEMP / "ms-playwright")
 
     # Ensure PULSE_SERVER points to valid socket if WSLg
     if Path("/mnt/wslg/PulseServer").exists():

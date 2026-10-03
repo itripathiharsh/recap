@@ -36,6 +36,7 @@ jobs:
       HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
       BOT_DISPLAY_NAME: ${{ secrets.BOT_DISPLAY_NAME }}
       DEFAULT_USER_NAME: ${{ secrets.DEFAULT_USER_NAME }}
+      PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-playwright
 
     steps:
       - name: Checkout Repository

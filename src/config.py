@@ -42,8 +42,11 @@ os.environ.setdefault("HF_HOME", str(hf_cache))
 os.environ.setdefault("HF_HUB_CACHE", str(hf_cache / "hub"))
 os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(hf_cache / "hub"))
 os.environ.setdefault("TORCH_HOME", str(torch_cache))
-if sys.platform != "win32":
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(pw_cache)
-else:
-    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(pw_cache))
+if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
+    if pw_cache.exists():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(pw_cache)
+    elif (Path.home() / ".cache" / "ms-playwright").exists():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(Path.home() / ".cache" / "ms-playwright")
+    else:
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(pw_cache)
 
