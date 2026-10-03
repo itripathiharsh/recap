@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
@@ -543,6 +543,10 @@ export default function MeetingDetailPage() {
           onEnded={() => {
             setIsPlaying(false);
             setCurrentTime(0);
+          }}
+          onError={(e) => {
+            console.error('Audio load error:', e);
+            setIsPlaying(false);
           }}
         />
       )}
@@ -1170,8 +1174,12 @@ export default function MeetingDetailPage() {
                           audioRef.current.pause();
                           setIsPlaying(false);
                         } else {
-                          audioRef.current.play();
-                          setIsPlaying(true);
+                          audioRef.current.play().then(() => {
+                            setIsPlaying(true);
+                          }).catch((err) => {
+                            console.error('Playback failed:', err);
+                            setIsPlaying(false);
+                          });
                         }
                       }}
                       title={isPlaying ? 'Pause audio' : 'Play audio'}
@@ -1880,8 +1888,12 @@ export default function MeetingDetailPage() {
                       audioRef.current.pause();
                       setIsPlaying(false);
                     } else {
-                      audioRef.current.play();
-                      setIsPlaying(true);
+                      audioRef.current.play().then(() => {
+                        setIsPlaying(true);
+                      }).catch((err) => {
+                        console.error('Playback failed:', err);
+                        setIsPlaying(false);
+                      });
                     }
                   }}
                 >
