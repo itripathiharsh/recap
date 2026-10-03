@@ -176,6 +176,7 @@ class SchedulerDaemon:
 
 def start_scheduler() -> None:
     """Entrypoint function to run the scheduler daemon or one-shot check."""
+    global LOOKAHEAD_MINUTES
     import argparse
     parser = argparse.ArgumentParser(description="Recap Meeting Scheduler")
     parser.add_argument("--once", action="store_true", help="Run a single check for upcoming meetings and exit")
@@ -187,7 +188,6 @@ def start_scheduler() -> None:
 
     if args.once:
         logger.info("Executing one-shot scheduler check (lookahead: %d min)...", args.lookahead)
-        global LOOKAHEAD_MINUTES
         LOOKAHEAD_MINUTES = args.lookahead
         daemon.check_and_execute_upcoming()
     else:
