@@ -39,6 +39,11 @@ class JoinFailedError(Exception):
     """Raised when joining a Google Meet fails or is rejected."""
 
 
+class HostNotPresentError(Exception):
+    """Raised when meeting is waiting for host to arrive or start."""
+    pass
+
+
 def _ensure_display_and_audio(visible: bool = False) -> None:
     """Ensure Xvfb or WSLg display and PulseAudio environment are configured."""
     is_visible = visible or os.getenv("SHOW_BROWSER", "0").lower() in ("1", "true", "yes")
@@ -228,12 +233,19 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
     logger.info("Waiting for admission into call (timeout: %.0fs)...", timeout_seconds)
     start_time = time.time()
 
-    # Rejection indicators
-    rejection_selectors = [
-        'text="You can\'t join this video call"',
+    # Rejection indicators (explicit rejections by human or policy)
+    explicit_rejection_selectors = [
         'text="Someone in the call denied your request"',
         'text="You\'ve been removed from the meeting"',
         'text="Someone removed you from the meeting"',
+    ]
+
+    # Host not present indicators — the host has simply not arrived or opened the room yet
+    host_not_present_selectors = [
+        'text="No one can join a meeting unless invited or admitted by the host"',
+        'text="Waiting for the host"',
+        'text="Waiting for host"',
+        'text="Returning to home screen in"',
     ]
 
     # Waiting-room indicators — if ANY of these are visible, we are still waiting to be admitted
@@ -259,8 +271,18 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
     last_log_time = 0.0
 
     while time.time() - start_time < timeout_seconds:
-        # 1. Check rejection indicators
-        for sel in rejection_selectors:
+        # 1. Check if meeting is waiting for host to enter
+        for sel in host_not_present_selectors:
+            try:
+                if page.locator(sel).count() > 0 and page.locator(sel).first.is_visible():
+                    raise HostNotPresentError("Host has not entered the meeting room yet")
+            except HostNotPresentError:
+                raise
+            except Exception:
+                pass
+
+        # 2. Check explicit rejection indicators
+        for sel in explicit_rejection_selectors:
             try:
                 if page.locator(sel).count() > 0 and page.locator(sel).first.is_visible():
                     raise JoinFailedError(f"Admission denied or rejected: {sel}")
@@ -268,6 +290,18 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
                 raise
             except Exception:
                 pass
+
+        # 3. Check generic 'You can\'t join this video call'
+        try:
+            cant_join = page.locator('text="You can\'t join this video call"')
+            if cant_join.count() > 0 and cant_join.first.is_visible():
+                if page.locator('text="No one can join"').count() > 0:
+                    raise HostNotPresentError("Host has not entered the meeting room yet")
+                raise HostNotPresentError("Meeting room is waiting for host to arrive or admit")
+        except (HostNotPresentError, JoinFailedError):
+            raise
+        except Exception:
+            pass
 
         # 2. Check if still in waiting room
         is_still_waiting = False
@@ -373,12 +407,40 @@ def join_and_record(
         )
         page = context.pages[0] if len(context.pages) > 0 else context.new_page()
 
+        # Stealth: Remove navigator.webdriver flag
         try:
-            logger.info("Navigating to %s...", meet_link)
-            page.goto(meet_link, wait_until="networkidle", timeout=45000)
+            context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+        except Exception as st_err:
+            logger.warning("Could not add webdriver stealth script: %s", st_err)
 
-            _handle_prejoin_page(page, display_name)
-            _wait_for_admission(page, timeout_seconds=admission_timeout)
+        start_wait = time.time()
+        admitted = False
+
+        try:
+            while time.time() - start_wait < admission_timeout:
+                try:
+                    logger.info("Navigating to %s (waiting for host, elapsed: %.0fs/%.0fs)...", meet_link, time.time() - start_wait, admission_timeout)
+                    page.goto(meet_link, wait_until="networkidle", timeout=45000)
+
+                    # Check if host not present on landing
+                    if page.locator("text='No one can join a meeting unless invited or admitted by the host'").count() > 0 and page.locator("text='No one can join a meeting unless invited or admitted by the host'").first.is_visible():
+                        logger.info("Host has not entered Google Meet room yet. Waiting 12s before re-checking...")
+                        time.sleep(12)
+                        continue
+
+                    _handle_prejoin_page(page, display_name)
+
+                    remaining = max(30.0, admission_timeout - (time.time() - start_wait))
+                    _wait_for_admission(page, timeout_seconds=remaining)
+                    admitted = True
+                    break
+                except HostNotPresentError as h_err:
+                    logger.info("%s. Waiting 12s for host to arrive before retrying...", h_err)
+                    time.sleep(12)
+                    continue
+
+            if not admitted:
+                raise JoinFailedError(f"Host did not start or admit the bot into meeting within {int(admission_timeout)}s.")
 
             # Admitted! Update job status to recording
             logger.info("Admitted to call. Transitioning job %s to 'recording'.", meeting_id)

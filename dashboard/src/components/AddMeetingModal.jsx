@@ -138,6 +138,13 @@ export default function AddMeetingModal({ isOpen, onClose, onMeetingAdded }) {
         createdMeeting = json.meeting;
       }
 
+      // Automatically trigger the GitHub Actions cloud runner for the meeting
+      if (createdMeeting?.id) {
+        fetch(`/api/meetings/${createdMeeting.id}/dispatch`, {
+          method: 'POST',
+        }).catch((dispErr) => console.warn('Cloud runner dispatch warning:', dispErr));
+      }
+
       setTitle('');
       setMeetLink('');
       if (onMeetingAdded && createdMeeting) {
