@@ -68,7 +68,11 @@ def _get_pyannote_pipeline(model_name: str, hf_token: str | None = None) -> Any:
 
     try:
         from pyannote.audio import Pipeline
-        return Pipeline.from_pretrained(model_name, use_auth_token=token)
+        # huggingface_hub >= 0.24 deprecated use_auth_token in favor of token
+        try:
+            return Pipeline.from_pretrained(model_name, token=token)
+        except (TypeError, ValueError):
+            return Pipeline.from_pretrained(model_name, use_auth_token=token)
     except ImportError as exc:
         raise DiarizationError(
             "pyannote.audio is not installed. Install dependencies per requirements.txt."

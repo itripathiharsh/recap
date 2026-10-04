@@ -205,17 +205,38 @@ def resolve_speaker_names(
     # -------------------------------------------------------------
     # 2. Single speaker detected in audio fallback
     # -------------------------------------------------------------
-    if len(unique_speakers) == 1 and unique_speakers[0] != "UNKNOWN" and unique_speakers[0] in unresolved_speakers:
+    has_real_participants = any(
+        p.get("source") in ("dom_fallback", "google_meet_api", "provided", "default_user_fallback")
+        for p in known_participants
+    )
+    if len(unique_speakers) == 1:
         sole_speaker = unique_speakers[0]
-        assigned = candidate_names[0] if candidate_names else target_user
-        mapping[sole_speaker] = assigned
-        evidence_log[sole_speaker] = {
-            "assigned_name": assigned,
-            "confidence": 1.0,
-            "source": "single_speaker_heuristic",
-            "evidence": "Single speaker in meeting; attributed to primary user/sole participant.",
-        }
-        logger.info("Single speaker detected: %s -> %s", sole_speaker, assigned)
+        should_map = (sole_speaker != "UNKNOWN" and sole_speaker in unresolved_speakers) or (
+            sole_speaker == "UNKNOWN" and (has_real_participants or user_name is not None)
+        )
+        if should_map:
+            assigned = candidate_names[0] if candidate_names else target_user
+            mapping[sole_speaker] = assigned
+            evidence_log[sole_speaker] = {
+                "assigned_name": assigned,
+                "confidence": 1.0,
+                "source": "single_speaker_heuristic",
+                "evidence": "Single speaker in meeting; attributed to primary user/sole participant.",
+            }
+            logger.info("Single speaker detected: %s -> %s", sole_speaker, assigned)
+            unresolved_speakers = []
+    elif len(candidate_names) == 1 and has_real_participants:
+        assigned = candidate_names[0]
+        for spk in unique_speakers:
+            if mapping.get(spk) == spk:
+                mapping[spk] = assigned
+                evidence_log[spk] = {
+                    "assigned_name": assigned,
+                    "confidence": 0.95,
+                    "source": "sole_participant_heuristic",
+                    "evidence": "Only 1 verified participant in meeting; attributed all speech to sole participant.",
+                }
+                logger.info("Sole participant detected: %s -> %s", spk, assigned)
         unresolved_speakers = []
 
     # -------------------------------------------------------------

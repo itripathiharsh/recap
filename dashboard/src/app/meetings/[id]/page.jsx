@@ -342,12 +342,17 @@ export default function MeetingDetailPage() {
   // Unique participants & speaking duration breakdown
   const speakerStats = useMemo(() => {
     if (!speakerTurns || speakerTurns.length === 0) return [];
+    const hasNamedSpeakers = speakerTurns.some(
+      (turn) => turn.speaker && !isPlaceholderSpeaker(turn.speaker)
+    );
     const map = {};
     speakerTurns.forEach((turn) => {
-      const spk = (turn.speaker || '').trim();
-      // Placeholder diarization labels are not people; showing them as
-      // participants with a 0% share made the card look broken.
-      if (!spk || isPlaceholderSpeaker(spk)) return;
+      let spk = (turn.speaker || '').trim();
+      if (!spk) return;
+      if (isPlaceholderSpeaker(spk)) {
+        if (hasNamedSpeakers) return;
+        spk = spk.toUpperCase() === 'UNKNOWN' ? 'Speaker 1' : spk.replace(/_/g, ' ');
+      }
       const start = Number(turn.start_time);
       const end = Number(turn.end_time);
       const dur = Number.isFinite(start) && Number.isFinite(end) && end > start ? end - start : 0;
