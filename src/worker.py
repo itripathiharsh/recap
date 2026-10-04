@@ -188,12 +188,12 @@ def execute_meeting_pipeline(
             ended_at = datetime.now(timezone.utc).isoformat()
             db_update_meeting_status(
                 meeting_id=meeting_id,
-                status="discarded",
+                status="failed",
                 error_message=f"Discarded: {substance_reason}",
                 ended_at=ended_at,
             )
             if job_id:
-                db_update_job(job_id=job_id, status="completed", completed_at=ended_at)
+                db_update_job(job_id=job_id, status="failed", completed_at=ended_at)
             db_record_system_event(
                 level="warning",
                 event_type="meeting_discarded",

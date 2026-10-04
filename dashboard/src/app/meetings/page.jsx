@@ -234,8 +234,8 @@ export default function MeetingsPage() {
       const ageMs = now - refTime;
       if (m.status === 'joining' && ageMs > 5 * 60 * 1000) return false;
       if (m.status === 'stopping' && ageMs > 3 * 60 * 1000) return false;
-      if (m.status === 'processing' && ageMs > 30 * 60 * 1000) return false;
-      if (m.status === 'recording' && ageMs > 120 * 60 * 1000) return false;
+      if (m.status === 'processing' && ageMs > 8 * 60 * 1000) return false;
+      if (m.status === 'recording' && ageMs > 90 * 60 * 1000) return false;
       return true;
     };
 

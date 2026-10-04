@@ -105,8 +105,9 @@ export default function ProcessingProgress({ meeting }) {
   const ageMs = Date.now() - Date.parse(meeting?.started_at || meeting?.created_at || 0);
   const isStale =
     (status === 'joining' && ageMs > 5 * 60 * 1000) ||
+    (status === 'cancelled' && ageMs > 3 * 60 * 1000) ||
     (status === 'stopping' && ageMs > 3 * 60 * 1000) ||
-    (status === 'processing' && ageMs > 30 * 60 * 1000);
+    (status === 'processing' && ageMs > 8 * 60 * 1000);
 
   /* ------------------------------------------------- live "now" heartbeat */
   useEffect(() => {
@@ -309,39 +310,40 @@ export default function ProcessingProgress({ meeting }) {
           </div>
         </div>
 
-        {activeStage?.liveMs != null && (
-          <span className="pill pill-live tabular-nums">
-            <Clock size={13} aria-hidden="true" />
-            {clock(activeStage.liveMs / 1000)} in this stage
-          </span>
-        )}
-        {remainingMs != null && (
-          <span className="pill pill-eta tabular-nums">
-            <Clock size={13} aria-hidden="true" />
-            ~{clock(remainingMs / 1000)} left
-          </span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {activeStage?.liveMs != null && (
+            <span className="pill pill-live tabular-nums">
+              <Clock size={13} aria-hidden="true" />
+              {clock(activeStage.liveMs / 1000)} in this stage
+            </span>
+          )}
+          {remainingMs != null && (
+            <span className="pill pill-eta tabular-nums">
+              <Clock size={13} aria-hidden="true" />
+              ~{clock(remainingMs / 1000)} left
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setDismissed(true)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '6px',
+              color: '#64748B',
+              borderRadius: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            title="Dismiss panel"
+            aria-label="Dismiss panel"
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
-
-      {!hasData && (
-        <div className="pp-note">
-          <AlertCircle size={14} aria-hidden="true" />
-          <span>
-            This meeting is marked as processing, but the worker has not reported any stage
-            timings yet — so no stage times are shown rather than guessed ones.
-          </span>
-        </div>
-      )}
-
-      {hasData && remainingMs == null && (
-        <div className="pp-note">
-          <AlertCircle size={14} aria-hidden="true" />
-          <span>
-            No completed runs to compare against yet, so there is no honest time estimate. Stage
-            timings below are measured.
-          </span>
-        </div>
-      )}
 
       <div
         className="pp-bar"
