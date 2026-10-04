@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_JOBS_DIR = Path("data/jobs")
 DEFAULT_RECORDINGS_DIR = Path("data/recordings")
-DEFAULT_BOT_NAME = os.getenv("BOT_DISPLAY_NAME", "Notetaker Bot (Recording)")
+DEFAULT_BOT_NAME = os.getenv("BOT_DISPLAY_NAME") or "Recap Meet Recorder"
 DEFAULT_ADMISSION_TIMEOUT = 300.0  # 5 minutes per API_SPECS.md
 DEFAULT_PULSE_SOURCE = "VirtualSink.monitor"
 
