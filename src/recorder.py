@@ -153,6 +153,29 @@ def _check_bot_removed(page: Any) -> bool:
     return False
 
 
+def _open_people_panel(page: Any) -> None:
+    """Open Google Meet People panel to render attendee list into DOM."""
+    if page is None:
+        return
+    try:
+        if hasattr(page, "locator"):
+            for sel in [
+                "button[aria-label*='People' i]",
+                "button[aria-label*='Show everyone' i]",
+                "button[data-panel-id='1']",
+                "button[jsname='A5il2e']",
+            ]:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    pressed = loc.first.get_attribute("aria-pressed")
+                    if pressed != "true":
+                        loc.first.click()
+                        logger.info("Opened Google Meet People panel via: %s", sel)
+                    break
+    except Exception as exc:
+        logger.debug("Could not open People panel: %s", exc)
+
+
 def _extract_meet_participants(page: Any) -> list[str]:
     """Extract participant names from Google Meet DOM in real-time."""
     if page is None:
@@ -169,39 +192,53 @@ def _extract_meet_participants(page: Any) -> list[str]:
                     if (name) participants.add(name);
                 });
                 
-                // 2. Participant name labels in video grid
-                document.querySelectorAll('div[data-participant-id], div[data-allocation-index]').forEach(el => {
-                    const textEl = el.querySelector('span, div');
-                    if (textEl && textEl.textContent) {
-                        const name = textEl.textContent.trim();
-                        if (name && name.length > 1 && !name.includes(':') && !['You', 'Turn on', 'Turn off', 'People', 'Chat'].includes(name)) {
-                            participants.add(name);
-                        }
+                // 2. Participant name labels in video grid tiles
+                document.querySelectorAll('div[data-participant-id], div[data-requested-participant-id], div[data-initial-participant-id], div[data-allocation-index]').forEach(el => {
+                    const aria = el.getAttribute('aria-label') || '';
+                    if (aria && !aria.includes(':')) {
+                        participants.add(aria);
                     }
+                    el.querySelectorAll('span[jsname="V67aGc"], span[style*="text-overflow"], div.jT5TU, div.J327kf, div[role="heading"]').forEach(sub => {
+                        const txt = sub.textContent?.trim();
+                        if (txt) participants.add(txt);
+                    });
                 });
 
-                // 3. People tab list items if opened/rendered
-                document.querySelectorAll('[role="listitem"] [data-hovercard-id], [role="listitem"] span').forEach(el => {
-                    const name = el.textContent?.trim();
-                    if (name && name.length > 1 && !name.includes(':')) {
-                        participants.add(name);
-                    }
+                // 3. People tab list items (role="listitem")
+                document.querySelectorAll('[role="listitem"]').forEach(el => {
+                    const nameEl = el.querySelector('[data-hovercard-id], span.ZjEbFd, span.zWGUib, div > span');
+                    const txt = (nameEl?.textContent || el.textContent)?.trim();
+                    if (txt) participants.add(txt);
+                });
+
+                // 4. Any participant avatars or hovercards
+                document.querySelectorAll('[data-hovercard-id]').forEach(el => {
+                    const txt = el.textContent?.trim();
+                    if (txt) participants.add(txt);
                 });
 
                 return Array.from(participants);
             }""")
+            bot_name = os.getenv("BOT_DISPLAY_NAME", "Recap Meet Recorder").strip().lower()
             ignored = {
-                "You", "Meeting details", "Chat with everyone", "People", "Activities", "Host controls",
-                "Turn on microphone", "Turn off microphone", "Turn on camera", "Turn off camera",
-                "Backgrounds and effects", "Recap Recorder",
+                "you", "meeting details", "chat with everyone", "people", "activities", "host controls",
+                "turn on microphone", "turn off microphone", "turn on camera", "turn off camera",
+                "backgrounds and effects", "visual effects", "raise hand", "more options",
+                "recap recorder", "recap meet recorder", bot_name,
             }
             cleaned = []
-            for n in names:
-                if not n or len(n) > 40 or "\n" in n:
+            for raw in names:
+                if not raw or not isinstance(raw, str):
                     continue
-                if any(kw.lower() in n.lower() for kw in ["background", "visual_effects", "can't show", "tile in this"]):
+                # Strip suffixes like (Meeting host), (You), (Contributor), (Presentation), (Guest)
+                n = re.sub(r"\s*\((?:meeting host|you|contributor|presentation|guest)\)\s*$", "", raw, flags=re.IGNORECASE).strip()
+                if not n or len(n) < 2 or len(n) > 50 or "\n" in n or ":" in n:
                     continue
-                if n not in ignored and n not in cleaned:
+                if n.lower() in ignored:
+                    continue
+                if any(kw in n.lower() for kw in ["background", "visual_effects", "can't show", "tile in this", "microphone", "camera"]):
+                    continue
+                if n not in cleaned:
                     cleaned.append(n)
             return cleaned
     except Exception as exc:
@@ -338,6 +375,8 @@ def start_recording(
                 recording_start_monotonic=recording_start_monotonic,
                 recordings_dir=recordings_dir or DEFAULT_RECORDINGS_DIR,
             )
+            # Open People panel to render all attendees in DOM
+            _open_people_panel(page)
         except Exception as cap_err:
             logger.warning("Could not initialize live captions for %s: %s", meeting_id, cap_err)
 
@@ -491,6 +530,27 @@ def start_recording(
                 caption_collector.save()
             except Exception as cap_save_err:
                 logger.warning("Error finalizing captions for %s: %s", meeting_id, cap_save_err)
+
+        # Fallback to DEFAULT_USER_NAME if no participants were detected in DOM
+        if not participants_file.exists() or not discovered_participants:
+            default_user = os.getenv("DEFAULT_USER_NAME") or os.getenv("OWNER_NAME")
+            if default_user and default_user.strip():
+                clean_default = default_user.strip()
+                discovered_participants.add(clean_default)
+                fallback_payload = {
+                    "meeting_id": meeting_id,
+                    "source": "default_user_fallback",
+                    "conference_record": None,
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                    "participants": [
+                        {"displayName": clean_default, "user_type": "owner", "source": "default_user_fallback"}
+                    ],
+                }
+                try:
+                    participants_file.write_text(json.dumps(fallback_payload, indent=2), encoding="utf-8")
+                    logger.info("Saved default user participant fallback: %s", clean_default)
+                except Exception as p_err:
+                    logger.debug("Could not write default participant fallback: %s", p_err)
 
     logger.info("Recording finished for %s. Reason: %s", meeting_id, stop_reason)
 

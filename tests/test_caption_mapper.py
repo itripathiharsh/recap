@@ -313,3 +313,58 @@ def test_existing_speaker_resolver_regression(tmp_path: Path):
     assert updated_turns[0]["speaker"] == "Harsh Vardhan Tripathi"
     assert updated_turns[0]["speaker_id"] == "SPEAKER_00"
     assert updated_turns[0]["resolved_name"] == "Harsh Vardhan Tripathi"
+
+
+def test_unknown_single_speaker_mapped_when_participant_present(tmp_path: Path):
+    """Verify UNKNOWN speaker is mapped to verified participant in single-speaker meetings."""
+    rec_dir = tmp_path / "data" / "recordings" / "meet-unknown-fix"
+    rec_dir.mkdir(parents=True, exist_ok=True)
+    p_file = rec_dir / "participants.json"
+    p_file.write_text(json.dumps({
+        "meeting_id": "meet-unknown-fix",
+        "source": "dom_fallback",
+        "participants": [{"displayName": "Harsh Vardhan Tripathi", "source": "dom_fallback"}]
+    }), encoding="utf-8")
+
+    turns = [
+        {"speaker": "UNKNOWN", "start": 3.4, "end": 202.0, "text": "Hi, this is a test call."}
+    ]
+
+    updated_turns, mapping = resolve_speaker_names(
+        turns=turns,
+        meeting_id="meet-unknown-fix",
+        recordings_dir=tmp_path / "data" / "recordings",
+    )
+
+    assert mapping["UNKNOWN"] == "Harsh Vardhan Tripathi"
+    assert updated_turns[0]["speaker"] == "Harsh Vardhan Tripathi"
+    assert updated_turns[0]["resolved_name"] == "Harsh Vardhan Tripathi"
+
+
+def test_sole_participant_all_turns_mapped(tmp_path: Path):
+    """Verify multiple unassigned turns map to the sole verified attendee."""
+    rec_dir = tmp_path / "data" / "recordings" / "meet-sole"
+    rec_dir.mkdir(parents=True, exist_ok=True)
+    p_file = rec_dir / "participants.json"
+    p_file.write_text(json.dumps({
+        "meeting_id": "meet-sole",
+        "source": "google_meet_api",
+        "participants": [{"displayName": "Harsh Vardhan Tripathi", "source": "google_meet_api"}]
+    }), encoding="utf-8")
+
+    turns = [
+        {"speaker": "SPEAKER_00", "start": 0.0, "end": 10.0, "text": "First turn"},
+        {"speaker": "SPEAKER_01", "start": 12.0, "end": 20.0, "text": "Second turn"},
+    ]
+
+    updated_turns, mapping = resolve_speaker_names(
+        turns=turns,
+        meeting_id="meet-sole",
+        recordings_dir=tmp_path / "data" / "recordings",
+    )
+
+    assert mapping["SPEAKER_00"] == "Harsh Vardhan Tripathi"
+    assert mapping["SPEAKER_01"] == "Harsh Vardhan Tripathi"
+    assert updated_turns[0]["speaker"] == "Harsh Vardhan Tripathi"
+    assert updated_turns[1]["speaker"] == "Harsh Vardhan Tripathi"
+
