@@ -111,7 +111,7 @@ export default function ProcessingProgress({ meeting }) {
 
   /* ------------------------------------------------- live "now" heartbeat */
   useEffect(() => {
-    if (status !== 'processing') return undefined;
+    if (!['joining', 'recording', 'stopping', 'processing'].includes(status)) return undefined;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [status]);
@@ -236,29 +236,60 @@ export default function ProcessingProgress({ meeting }) {
     return Math.max(0, total - (activeStage.liveMs || 0));
   }, [activeStage, averages]);
 
-  /* ----------------------------------------------------------- recording */
+  /* ----------------------------------------------------------- recording / joining */
   if (dismissed || isStale) return null;
 
   if (status === 'recording' || status === 'joining' || status === 'stopping') {
+    const elapsedSec = Math.floor(
+      Math.max(0, (now - Date.parse(meeting?.started_at || meeting?.created_at || now)) / 1000)
+    );
+    const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+    const ss = String(elapsedSec % 60).padStart(2, '0');
+    const timerStr = `${mm}:${ss}`;
+
     return (
       <div className="pp-rec" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div className="pp-rec-pulse" aria-hidden="true" />
+          <div
+            className="pp-rec-pulse"
+            aria-hidden="true"
+            style={{ backgroundColor: status === 'joining' ? '#F59E0B' : '#EF4444' }}
+          />
           <div className="pp-rec-text">
-            <div className="pp-rec-title">
-              {status === 'joining'
-                ? 'Joining Meeting'
-                : status === 'stopping'
-                ? 'Stopping & Preparing Processing'
-                : 'Live Recording In Progress'}
+            <div className="pp-rec-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>
+                {status === 'joining'
+                  ? 'Joining Meeting'
+                  : status === 'stopping'
+                  ? 'Stopping & Preparing Processing'
+                  : 'Live Recording In Progress'}
+              </span>
+              <span
+                style={{
+                  fontSize: '12.5px',
+                  fontWeight: 700,
+                  fontFamily: 'monospace',
+                  backgroundColor: status === 'joining' ? '#FEF3C7' : '#FEE2E2',
+                  color: status === 'joining' ? '#B45309' : '#B91C1C',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                }}
+              >
+                {timerStr}
+              </span>
             </div>
             <div className="pp-rec-sub">
               {status === 'joining'
-                ? 'The recap bot is joining the call.'
+                ? `Connecting to Google Meet (${meeting?.meet_link || 'lobby'}). Spinning up cloud runner and knocking...`
                 : status === 'stopping'
                 ? 'Stopping audio capture and launching speech-to-text pipeline...'
-                : 'The recap bot is inside the call capturing audio.'}
+                : 'The recap bot is inside the call capturing audio and participant activity.'}
             </div>
+            {status === 'joining' && elapsedSec > 40 && (
+              <div style={{ marginTop: '4px', fontSize: '11.5px', color: '#B45309', fontWeight: 500 }}>
+                Tip: If admit prompt does not appear on your Google Meet screen, make sure &quot;Host management&quot; is turned OFF in Google Meet Host Controls (blue shield icon at bottom right).
+              </div>
+            )}
           </div>
         </div>
         <button

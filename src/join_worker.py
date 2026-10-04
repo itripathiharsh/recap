@@ -344,6 +344,10 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
         'text="You\'ve been removed from the meeting"',
         'text="Someone removed you from the meeting"',
         'text="You can\'t join this meeting"',
+        'text="You can\'t join this video call"',
+        'text="No one can join a meeting unless invited or admitted by the host"',
+        'text="Returning to home screen"',
+        'text="Return to home screen"',
     ]
 
     # Waiting-room indicators — if ANY of these are visible, we are waiting for the host to admit us!
@@ -375,6 +379,19 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
     last_log_time = 0.0
 
     while time.time() - start_time < timeout_seconds:
+        # Check if URL redirected away from meet call (e.g. redirected to home screen or marketing page)
+        try:
+            curr_url = page.url.lower()
+            if "workspace.google.com" in curr_url or "google.com/account/about" in curr_url:
+                raise JoinFailedError(
+                    "Google Meet redirected bot away from call. "
+                    "In your Google Meet window, turn OFF 'Host management' in Host Controls (blue shield icon at bottom right) so guest bots can join."
+                )
+        except JoinFailedError:
+            raise
+        except Exception:
+            pass
+
         # Check if AV permission dialog appeared in-call or during connection
         for av_sel in [
             "button:has-text('Continue without microphone and camera')",
@@ -415,6 +432,11 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
         for sel in explicit_rejection_selectors:
             try:
                 if page.locator(sel).count() > 0 and page.locator(sel).first.is_visible():
+                    if any(term in sel for term in ["video call", "home screen", "unless invited"]):
+                        raise JoinFailedError(
+                            "Google Meet blocked guest entry: 'You can't join this video call'. "
+                            "In Google Meet, click the Host Controls shield icon (bottom right) and turn 'Host management' to OFF so guest bots can be admitted."
+                        )
                     raise JoinFailedError(f"Admission denied or rejected: {sel}")
             except JoinFailedError:
                 raise
