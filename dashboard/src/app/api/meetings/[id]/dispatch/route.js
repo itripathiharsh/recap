@@ -43,6 +43,23 @@ export async function POST(request, { params }) {
       );
     }
 
+    // Immediately reflect joining status in Supabase so UI shows live timer without waiting for runner boot
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (supabaseUrl && supabaseKey) {
+        const client = createClient(supabaseUrl, supabaseKey);
+        await client.from('meetings').update({
+          status: 'joining',
+          started_at: new Date().toISOString(),
+          error_message: null,
+        }).eq('id', id);
+      }
+    } catch (dbErr) {
+      console.error('Failed to update meeting status to joining in Supabase:', dbErr);
+    }
+
     return NextResponse.json({
       success: true,
       message: `Triggered GitHub Actions runner for meeting ${id}. Bot will spin up in ~15-20 seconds.`,

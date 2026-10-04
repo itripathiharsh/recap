@@ -104,14 +104,14 @@ export default function ProcessingProgress({ meeting }) {
   // Stale guard: never show persistent banners for crashed/abandoned meetings
   const ageMs = Date.now() - Date.parse(meeting?.started_at || meeting?.created_at || 0);
   const isStale =
-    (status === 'joining' && ageMs > 5 * 60 * 1000) ||
+    ((status === 'joining' || status === 'queued') && ageMs > 5 * 60 * 1000) ||
     (status === 'cancelled' && ageMs > 3 * 60 * 1000) ||
     (status === 'stopping' && ageMs > 3 * 60 * 1000) ||
     (status === 'processing' && ageMs > 8 * 60 * 1000);
 
   /* ------------------------------------------------- live "now" heartbeat */
   useEffect(() => {
-    if (!['joining', 'recording', 'stopping', 'processing'].includes(status)) return undefined;
+    if (!['joining', 'queued', 'recording', 'stopping', 'processing'].includes(status)) return undefined;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [status]);
@@ -239,7 +239,7 @@ export default function ProcessingProgress({ meeting }) {
   /* ----------------------------------------------------------- recording / joining */
   if (dismissed || isStale) return null;
 
-  if (status === 'recording' || status === 'joining' || status === 'stopping') {
+  if (status === 'recording' || status === 'joining' || status === 'queued' || status === 'stopping') {
     const elapsedSec = Math.floor(
       Math.max(0, (now - Date.parse(meeting?.started_at || meeting?.created_at || now)) / 1000)
     );
@@ -247,18 +247,20 @@ export default function ProcessingProgress({ meeting }) {
     const ss = String(elapsedSec % 60).padStart(2, '0');
     const timerStr = `${mm}:${ss}`;
 
+    const isJoiningOrQueued = status === 'joining' || status === 'queued';
+
     return (
       <div className="pp-rec" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div
             className="pp-rec-pulse"
             aria-hidden="true"
-            style={{ backgroundColor: status === 'joining' ? '#F59E0B' : '#EF4444' }}
+            style={{ backgroundColor: isJoiningOrQueued ? '#F59E0B' : '#EF4444' }}
           />
           <div className="pp-rec-text">
             <div className="pp-rec-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span>
-                {status === 'joining'
+                {isJoiningOrQueued
                   ? 'Joining Meeting'
                   : status === 'stopping'
                   ? 'Stopping & Preparing Processing'
@@ -269,8 +271,8 @@ export default function ProcessingProgress({ meeting }) {
                   fontSize: '12.5px',
                   fontWeight: 700,
                   fontFamily: 'monospace',
-                  backgroundColor: status === 'joining' ? '#FEF3C7' : '#FEE2E2',
-                  color: status === 'joining' ? '#B45309' : '#B91C1C',
+                  backgroundColor: isJoiningOrQueued ? '#FEF3C7' : '#FEE2E2',
+                  color: isJoiningOrQueued ? '#B45309' : '#B91C1C',
                   padding: '2px 8px',
                   borderRadius: '4px',
                 }}
@@ -279,13 +281,13 @@ export default function ProcessingProgress({ meeting }) {
               </span>
             </div>
             <div className="pp-rec-sub">
-              {status === 'joining'
+              {isJoiningOrQueued
                 ? `Connecting to Google Meet (${meeting?.meet_link || 'lobby'}). Spinning up cloud runner and knocking...`
                 : status === 'stopping'
                 ? 'Stopping audio capture and launching speech-to-text pipeline...'
                 : 'The recap bot is inside the call capturing audio and participant activity.'}
             </div>
-            {status === 'joining' && elapsedSec > 40 && (
+            {isJoiningOrQueued && elapsedSec > 40 && (
               <div style={{ marginTop: '4px', fontSize: '11.5px', color: '#B45309', fontWeight: 500 }}>
                 Tip: If admit prompt does not appear on your Google Meet screen, make sure &quot;Host management&quot; is turned OFF in Google Meet Host Controls (blue shield icon at bottom right).
               </div>
