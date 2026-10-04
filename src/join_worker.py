@@ -124,11 +124,19 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
     logger.info("Handling Google Meet pre-join page...")
     time.sleep(3)
 
-    # Check for invalid meeting code / home screen
-    if page.locator("text='Return to home screen'").count() > 0 or "Invalid meeting code" in page.content():
-        raise JoinFailedError("Invalid or expired Google Meet link.")
+    # 1. Truly invalid meeting code
+    if "Invalid meeting code" in page.content() or "Check your meeting code" in page.content():
+        raise JoinFailedError("Invalid Google Meet code. Please check the meeting URL.")
 
-    # Dismiss any initial prompt dialogs ("Got it", "Dismiss", "Close")
+    # 2. Host not present yet (Quick Access required / host hasn't opened room)
+    if (
+        page.locator("text='Return to home screen'").count() > 0
+        or "You can't join this video call" in page.content()
+        or "No one can join a meeting unless invited" in page.content()
+    ):
+        raise HostNotPresentError("Host has not started meeting yet or call is waiting for host to arrive")
+
+    # 3. Dismiss initial prompt dialogs ("Got it", "Dismiss", "Close")
     dismiss_selectors = [
         "button:has-text('Got it')",
         "button:has-text('Dismiss')",
@@ -138,39 +146,39 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
         try:
             loc = page.locator(sel)
             if loc.count() > 0 and loc.first.is_visible():
-                loc.first.click()
-                time.sleep(0.5)
+                loc.first.click(timeout=1000)
+                time.sleep(0.3)
         except Exception:
             pass
 
-    # Mute Microphone and Camera using standard Meet shortcuts (Control+d, Control+e)
+    # 4. Mute Microphone and Camera using standard Meet shortcuts (Control+d, Control+e)
     try:
         page.keyboard.press("Control+d")
-        time.sleep(0.5)
+        time.sleep(0.3)
         page.keyboard.press("Control+e")
-        time.sleep(0.5)
+        time.sleep(0.3)
         logger.info("Toggled microphone and camera off via keyboard shortcuts.")
     except Exception as exc:
         logger.warning("Could not send mute shortcuts: %s", exc)
 
-    # Dismiss "Got it" sign-in tooltip if present
+    # 5. Dismiss "Got it" sign-in tooltip if present
     try:
         got_it = page.locator("button:has-text('Got it'), button[aria-label*='Got it' i]")
         if got_it.count() > 0 and got_it.first.is_visible():
-            got_it.first.click()
+            got_it.first.click(timeout=1000)
             time.sleep(0.3)
             logger.info("Dismissed Google sign-in tooltip.")
     except Exception:
         pass
 
-    # Dismiss any microphone / camera permission modals ("Continue without microphone and camera") via JS and locator
+    # 6. Dismiss AV permission modals ("Continue without microphone and camera") via JS and locator
     try:
         page.evaluate('''() => {
             const btns = Array.from(document.querySelectorAll('button'));
             const av = btns.find(b => b.innerText.toLowerCase().includes('continue without') || b.getAttribute('jsname') === 'IbE0S');
             if (av) av.click();
         }''')
-        time.sleep(0.5)
+        time.sleep(0.3)
     except Exception:
         pass
 
@@ -184,33 +192,31 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
         try:
             av_btn = page.locator(av_sel)
             if av_btn.count() > 0 and av_btn.first.is_visible():
-                av_btn.first.click(force=True)
-                time.sleep(0.5)
+                av_btn.first.click(force=True, timeout=1000)
+                time.sleep(0.3)
                 logger.info("Dismissed AV permission prompt via %s.", av_sel)
                 break
         except Exception:
             pass
 
-    # Fill display name if name input is present
+    # 7. Fill display name if genuine name input is present (only when not logged in)
     name_selectors = [
-        "input[placeholder*='name' i]",
         "input[aria-label*='name' i]",
+        "input[placeholder*='name' i]",
         "input[aria-label='Your name']",
-        "input[type='text']",
+        "input[jsname='YPqjbf']",
     ]
     name_filled = False
     for sel in name_selectors:
         try:
             loc = page.locator(sel)
             if loc.count() > 0 and loc.first.is_visible():
-                loc.first.click()
+                loc.first.click(timeout=1000)
                 time.sleep(0.2)
-                loc.first.fill("")
-                time.sleep(0.1)
-                page.keyboard.type(bot_name, delay=30)
-                time.sleep(0.4)
+                loc.first.fill(bot_name)
+                time.sleep(0.2)
                 page.keyboard.press("Tab")
-                time.sleep(0.5)
+                time.sleep(0.3)
                 name_filled = True
                 logger.info("Filled bot display name via keyboard typing: '%s'", bot_name)
                 break
@@ -220,69 +226,52 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
     if not name_filled:
         logger.info("No name input required (may be logged in or already set).")
 
-    # Dismiss AV modal again via JS in case it re-appeared
-    try:
-        page.evaluate('''() => {
-            const btns = Array.from(document.querySelectorAll('button'));
-            const av = btns.find(b => b.innerText.toLowerCase().includes('continue without') || b.getAttribute('jsname') === 'IbE0S');
-            if (av) av.click();
-        }''')
-        time.sleep(0.4)
-    except Exception:
-        pass
+    # Dismiss AV modal again in case it reappeared
+    for av_sel in [
+        "button:has-text('Continue without microphone and camera')",
+        "button:has-text('Continue without microphone')",
+        "button[jsname='IbE0S']",
+    ]:
+        try:
+            av_btn = page.locator(av_sel)
+            if av_btn.count() > 0 and av_btn.first.is_visible():
+                av_btn.first.click(force=True, timeout=1000)
+                time.sleep(0.3)
+                break
+        except Exception:
+            pass
 
-    # Click "Ask to join" or "Join now" — First attempt via DOM JS to bypass pointer interception
+    # 8. Click "Ask to join" or "Join now" using Playwright real user clicks FIRST
+    join_selectors = [
+        "button[jsname='Qx7uuf']",
+        "button:has-text('Ask to join')",
+        "button:has-text('Join now')",
+        "button:has-text('Join')",
+        "div[role='button'][jsname='Qx7uuf']",
+        "div[role='button']:has-text('Ask to join')",
+        "div[role='button']:has-text('Join now')",
+        "button[aria-label*='Ask to join' i]",
+        "button[aria-label*='Join now' i]",
+        "button[aria-label*='Join meeting' i]",
+    ]
     clicked = False
-    try:
-        clicked_text = page.evaluate('''() => {
-            const btns = Array.from(document.querySelectorAll('button, div[role="button"]'));
-            const join = btns.find(b => {
-                const t = b.innerText ? b.innerText.toLowerCase() : '';
-                return t.includes('join now') || t.includes('ask to join');
-            });
-            if (join) {
-                join.click();
-                return join.innerText.trim();
-            }
-            return null;
-        }''')
-        if clicked_text:
-            clicked = True
-            logger.info("Clicked join button via DOM JS: '%s'", clicked_text)
-    except Exception as js_err:
-        logger.warning("DOM JS click attempt: %s", js_err)
-
-    if not clicked:
-        join_selectors = [
-            "button:has-text('Join now')",
-            "button:has-text('Ask to join')",
-            "button:has-text('Join')",
-            "button[aria-label*='Join now' i]",
-            "button[aria-label*='Ask to join' i]",
-            "button[aria-label*='Join meeting' i]",
-            "span:has-text('Join now')",
-            "span:has-text('Ask to join')",
-            "button[jsname='Qx7uuf']",
-            "div[role='button']:has-text('Join now')",
-            "div[role='button']:has-text('Ask to join')",
-        ]
-        for sel in join_selectors:
-            try:
-                loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    loc.first.click(force=True)
-                    clicked = True
-                    logger.info("Clicked join button via selector: %s", sel)
-                    break
-            except Exception:
-                pass
+    for sel in join_selectors:
+        try:
+            loc = page.locator(sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                loc.first.click(force=True, timeout=3000)
+                clicked = True
+                logger.info("Clicked join button via Playwright locator: %s", sel)
+                break
+        except Exception:
+            pass
 
     if not clicked:
         try:
-            for name in ["Join now", "Ask to join", "Join"]:
+            for name in ["Ask to join", "Join now", "Join"]:
                 btn = page.get_by_role("button", name=name)
                 if btn.count() > 0 and btn.first.is_visible():
-                    btn.first.click(force=True)
+                    btn.first.click(force=True, timeout=3000)
                     clicked = True
                     logger.info("Clicked join button via get_by_role('%s')", name)
                     break
@@ -290,19 +279,35 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
             pass
 
     if not clicked:
-        logger.warning("Could not locate primary join button with standard selectors; attempting Enter key.")
-        page.keyboard.press("Enter")
+        # Fallback to DOM JS dispatching full MouseEvent sequence
+        try:
+            clicked_text = page.evaluate('''() => {
+                const btns = Array.from(document.querySelectorAll('button, div[role="button"]'));
+                const join = btns.find(b => {
+                    if (b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
+                    const t = b.innerText ? b.innerText.toLowerCase() : '';
+                    return t.includes('ask to join') || t.includes('join now') || b.getAttribute('jsname') === 'Qx7uuf';
+                });
+                if (join) {
+                    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(evtType => {
+                        join.dispatchEvent(new MouseEvent(evtType, { bubbles: true, cancelable: true, view: window }));
+                    });
+                    return join.innerText.trim();
+                }
+                return null;
+            }''')
+            if clicked_text:
+                clicked = True
+                logger.info("Clicked join button via DOM JS event dispatch: '%s'", clicked_text)
+        except Exception as js_err:
+            logger.warning("DOM JS click attempt: %s", js_err)
 
-    time.sleep(1.0)
-    # If still on 'Ready to join?' screen after click, press Enter to submit
+    # Press Enter as final reinforcement
     try:
-        ready_hdr = page.locator("text='Ready to join?'")
-        if ready_hdr.count() > 0 and ready_hdr.first.is_visible():
-            logger.info("'Ready to join?' still visible after click attempt. Pressing Enter to submit join form...")
-            page.keyboard.press("Enter")
-            time.sleep(1.0)
+        page.keyboard.press("Enter")
     except Exception:
         pass
+    time.sleep(1.0)
 
 
 def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_TIMEOUT) -> bool:
@@ -402,7 +407,22 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
             except Exception:
                 pass
 
-        # 3. Check if waiting in lobby / waiting room
+        # 3. Check if STILL on pre-join page with visible join button (retry click if stuck)
+        try:
+            join_btn = page.locator("button[jsname='Qx7uuf'], button:has-text('Ask to join'), button:has-text('Join now')")
+            if join_btn.count() > 0 and join_btn.first.is_visible():
+                now = time.time()
+                if now - last_log_time > 10.0:
+                    logger.info("Join button still visible on pre-join screen. Re-clicking join button and pressing Enter...")
+                    last_log_time = now
+                join_btn.first.click(force=True, timeout=2000)
+                page.keyboard.press("Enter")
+                time.sleep(2)
+                continue
+        except Exception:
+            pass
+
+        # 4. Check if waiting in lobby / waiting room
         is_still_waiting = False
         for sel in waiting_selectors:
             try:
@@ -413,15 +433,12 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
             except Exception:
                 pass
 
-        if is_still_waiting:
-            now = time.time()
-            if now - last_log_time > 15.0:
-                logger.info("Still waiting for host to admit bot into meeting (%.0fs elapsed)...", now - start_time)
-                last_log_time = now
-            time.sleep(2)
-            continue
+        now = time.time()
+        if now - last_log_time > 15.0:
+            logger.info("Waiting for host admission or call connection (%.0fs elapsed, in_lobby=%s)...", now - start_time, is_still_waiting)
+            last_log_time = now
 
-        time.sleep(1.5)
+        time.sleep(2 if is_still_waiting else 1.5)
 
     raise JoinFailedError(f"Timed out waiting for admission into meeting (>{int(timeout_seconds/60)} min).")
 

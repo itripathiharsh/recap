@@ -131,6 +131,22 @@ def _check_bot_removed(page: Any) -> bool:
             except Exception as eval_err:
                 logger.debug("Error in Meet DOM evaluation: %s", eval_err)
 
+        # 4. Fallback locator check (supports Playwright page mocks in tests)
+        if hasattr(page, "locator"):
+            for phrase in [
+                "text=Someone removed you",
+                "text=You've been removed",
+                "text=You were removed",
+                "text=Return to home screen",
+            ]:
+                try:
+                    loc = page.locator(phrase)
+                    if loc.count() > 0:
+                        logger.warning("Bot detected removal notification via locator (%s).", phrase)
+                        return True
+                except Exception:
+                    pass
+
     except Exception as exc:
         logger.warning("Error inspecting page state: %s", exc)
 

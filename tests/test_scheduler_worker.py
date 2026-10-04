@@ -116,7 +116,13 @@ def test_execute_meeting_pipeline_success(
     mock_create_job.return_value = {"id": "job-test-uuid"}
     fake_audio = tmp_path / "audio.wav"
     fake_audio.write_text("fake audio")
-    mock_join.return_value = fake_audio
+    
+    def fake_join(*args, **kwargs):
+        from src.worker import db_update_meeting_status
+        db_update_meeting_status(meeting_id=meeting_data["id"], status="recording")
+        return fake_audio
+
+    mock_join.side_effect = fake_join
     mock_transcribe.return_value = {
         "segments": [
             {
