@@ -62,6 +62,21 @@ export default function MeetingsPage() {
   const [playbackSpeed, setPlaybackSpeed] = useState('1x');
   const [audioNotice, setAudioNotice] = useState(null);
 
+  // Live real-time tick for counting stopwatches
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const formatElapsed = (startTime) => {
+    if (!startTime) return '00:00';
+    const elapsedSec = Math.floor(Math.max(0, (nowTick - Date.parse(startTime)) / 1000));
+    const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+    const ss = String(elapsedSec % 60).padStart(2, '0');
+    return `${mm}:${ss}`;
+  };
+
   const fetchMeetingsData = async () => {
     try {
       setLoading(true);
@@ -945,7 +960,101 @@ export default function MeetingsPage() {
                 </div>
 
                 <div className="detail-header-actions">
-                  {['scheduled', 'queued', 'failed'].includes(currentMeeting.status) && (
+                  {currentMeeting.status === 'joining' ? (
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        borderRadius: '6px',
+                        backgroundColor: '#FEF3C7',
+                        color: '#B45309',
+                        border: '1px solid #FDE68A',
+                      }}
+                    >
+                      <span className="pp-rec-pulse" style={{ width: '8px', height: '8px', backgroundColor: '#F59E0B' }} />
+                      <span>Joining Call... ({formatElapsed(currentMeeting.started_at || currentMeeting.created_at)})</span>
+                    </div>
+                  ) : currentMeeting.status === 'recording' ? (
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        borderRadius: '6px',
+                        backgroundColor: '#FEE2E2',
+                        color: '#B91C1C',
+                        border: '1px solid #FECACA',
+                      }}
+                    >
+                      <span className="pp-rec-pulse" style={{ width: '8px', height: '8px', backgroundColor: '#EF4444' }} />
+                      <span>Live in Call ({formatElapsed(currentMeeting.started_at || currentMeeting.created_at)})</span>
+                    </div>
+                  ) : currentMeeting.status === 'stopping' || currentMeeting.status === 'processing' ? (
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        borderRadius: '6px',
+                        backgroundColor: '#EDE9FE',
+                        color: '#6D28D9',
+                        border: '1px solid #DDD6FE',
+                      }}
+                    >
+                      <span>Processing Summary...</span>
+                    </div>
+                  ) : currentMeeting.status === 'completed' ? (
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        borderRadius: '6px',
+                        backgroundColor: '#ECFDF5',
+                        color: '#047857',
+                        border: '1px solid #A7F3D0',
+                      }}
+                    >
+                      <span>Completed</span>
+                    </div>
+                  ) : currentMeeting.status === 'failed' ? (
+                    <button
+                      type="button"
+                      onClick={() => handleDispatchBot(currentMeeting.id)}
+                      disabled={dispatchingId === currentMeeting.id}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        fontSize: '12.5px',
+                        fontWeight: 600,
+                        borderRadius: '6px',
+                        backgroundColor: dispatchingId === currentMeeting.id ? '#94A3B8' : '#EF4444',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        cursor: dispatchingId === currentMeeting.id ? 'not-allowed' : 'pointer',
+                        transition: 'background-color 150ms ease',
+                      }}
+                      title="Retry triggering bot to join this call"
+                    >
+                      <Play size={13} fill="#FFFFFF" />
+                      <span>{dispatchingId === currentMeeting.id ? 'Dispatching...' : 'Retry Join Call'}</span>
+                    </button>
+                  ) : (
                     <button
                       type="button"
                       onClick={() => handleDispatchBot(currentMeeting.id)}
@@ -997,6 +1106,66 @@ export default function MeetingsPage() {
                   </button>
                 </div>
               </div>
+
+              {currentMeeting.status === 'joining' && (
+                <div
+                  style={{
+                    padding: '10px 14px',
+                    margin: '8px 0 12px 0',
+                    borderRadius: '6px',
+                    fontSize: '12.5px',
+                    lineHeight: '1.4',
+                    backgroundColor: '#FEF3C7',
+                    color: '#92400E',
+                    border: '1px solid #FDE68A',
+                  }}
+                >
+                  <strong>Recap bot is joining call ({formatElapsed(currentMeeting.started_at || currentMeeting.created_at)} elapsed)</strong>
+                  <div style={{ marginTop: '2px', color: '#B45309', fontSize: '12px' }}>
+                    Cloud runner is initializing and connecting to Google Meet ({currentMeeting.meet_link}). Once it knocks, click &quot;Admit&quot; on your Google Meet screen.
+                  </div>
+                </div>
+              )}
+
+              {currentMeeting.status === 'recording' && (
+                <div
+                  style={{
+                    padding: '10px 14px',
+                    margin: '8px 0 12px 0',
+                    borderRadius: '6px',
+                    fontSize: '12.5px',
+                    lineHeight: '1.4',
+                    backgroundColor: '#FEE2E2',
+                    color: '#991B1B',
+                    border: '1px solid #FECACA',
+                  }}
+                >
+                  <strong>🔴 Bot is inside the call ({formatElapsed(currentMeeting.started_at || currentMeeting.created_at)} recorded)</strong>
+                  <div style={{ marginTop: '2px', color: '#B91C1C', fontSize: '12px' }}>
+                    Audio and participants are being captured. You can leave anytime; processing will start automatically when call ends.
+                  </div>
+                </div>
+              )}
+
+              {currentMeeting.status === 'failed' && (
+                <div
+                  style={{
+                    padding: '10px 14px',
+                    margin: '8px 0 12px 0',
+                    borderRadius: '6px',
+                    fontSize: '12.5px',
+                    lineHeight: '1.4',
+                    backgroundColor: '#FEF2F2',
+                    color: '#991B1B',
+                    border: '1px solid #FECACA',
+                  }}
+                >
+                  <strong>Bot could not join call:</strong> {currentMeeting.error_message || 'Timed out waiting for host admission.'}
+                  <div style={{ marginTop: '4px', fontSize: '12px', color: '#7F1D1D' }}>
+                    Ensure the meeting is active, and if Google Meet Host Management is ON, turn it OFF in Host Controls (blue shield icon). Click &quot;Retry Join Call&quot; above to try again.
+                  </div>
+                </div>
+              )}
 
               {dispatchMessage && (
                 <div
