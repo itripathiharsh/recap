@@ -343,7 +343,10 @@ def run_meeting_by_id(meeting_id: str) -> bool:
         return False
 
     status = meeting.get("status")
-    if status in ("scheduled", "queued"):
+    if status == "completed":
+        logger.info("Meeting %s is already completed. Skipping redundant run.", meeting_id)
+        return True
+    elif status in ("scheduled", "queued"):
         claimed = db_claim_meeting(meeting_id, target_status="joining")
         if not claimed:
             logger.warning("Could not atomically claim meeting %s (may already be in progress).", meeting_id)
