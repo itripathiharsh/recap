@@ -128,13 +128,22 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
     if "Invalid meeting code" in page.content() or "Check your meeting code" in page.content():
         raise JoinFailedError("Invalid Google Meet code. Please check the meeting URL.")
 
-    # 2. Host not present yet (Quick Access required / host hasn't opened room)
+    # 2. Host not present yet or Google Meet entry restricted (Host Management ON / anonymous block)
     if (
         page.locator("text='Return to home screen'").count() > 0
         or "You can't join this video call" in page.content()
         or "No one can join a meeting unless invited" in page.content()
     ):
-        raise HostNotPresentError("Host has not started meeting yet or call is waiting for host to arrive")
+        try:
+            debug_dir = Path("data/debug")
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(debug_dir / "blocked_entry.png"))
+        except Exception:
+            pass
+        raise HostNotPresentError(
+            "Google Meet blocked entry: 'You can't join this video call'. "
+            "If host is already present, turn OFF 'Host management' in Meet host controls or authenticate bot via GOOGLE_SESSION_STATE."
+        )
 
     # 3. Dismiss initial prompt dialogs ("Got it", "Dismiss", "Close")
     dismiss_selectors = [
@@ -517,11 +526,12 @@ def join_and_record(
         # Load authenticated Google session if available
         auth_file = Path("data/google_auth.json")
         auth_env = os.getenv("GOOGLE_SESSION_STATE")
-        if auth_env and not auth_file.exists():
+        if auth_env:
             try:
                 import base64
                 auth_file.parent.mkdir(parents=True, exist_ok=True)
                 auth_file.write_bytes(base64.b64decode(auth_env))
+                logger.info("Synchronized data/google_auth.json from GOOGLE_SESSION_STATE environment variable.")
             except Exception as b64_err:
                 logger.warning("Could not decode GOOGLE_SESSION_STATE: %s", b64_err)
 
@@ -549,6 +559,7 @@ def join_and_record(
 
         start_wait = time.time()
         admitted = False
+        blocked_by_host_management = False
 
         try:
             while time.time() - start_wait < admission_timeout:
@@ -564,11 +575,21 @@ def join_and_record(
                     admitted = True
                     break
                 except HostNotPresentError as h_err:
-                    logger.info("%s. Waiting 12s for host to arrive before retrying...", h_err)
+                    blocked_by_host_management = True
+                    logger.warning(
+                        "%s. Retrying in 12s...",
+                        h_err
+                    )
                     time.sleep(12)
                     continue
 
             if not admitted:
+                if blocked_by_host_management:
+                    raise JoinFailedError(
+                        "Google Meet blocked bot entry: 'You can't join this video call'. "
+                        "If you are already in the call as host, please turn OFF 'Host management' in Google Meet Host Controls "
+                        "(blue shield icon at bottom right), or ensure the bot has an active Google login via GOOGLE_SESSION_STATE."
+                    )
                 raise JoinFailedError(f"Host did not start or admit the bot into meeting within {int(admission_timeout)}s.")
 
             # Admitted! Update job status to recording
