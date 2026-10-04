@@ -220,14 +220,17 @@ def _handle_prejoin_page(page: Page, bot_name: str) -> None:
         try:
             loc = page.locator(sel)
             if loc.count() > 0 and loc.first.is_visible():
-                loc.first.click(timeout=1000)
+                loc.first.click(timeout=1500)
                 time.sleep(0.2)
-                loc.first.fill(bot_name)
+                page.keyboard.press("Control+a")
+                page.keyboard.press("Backspace")
+                time.sleep(0.1)
+                page.keyboard.type(bot_name, delay=35)
                 time.sleep(0.2)
                 page.keyboard.press("Tab")
                 time.sleep(0.3)
                 name_filled = True
-                logger.info("Filled bot display name via keyboard typing: '%s'", bot_name)
+                logger.info("Filled bot display name via real keyboard typing: '%s'", bot_name)
                 break
         except Exception as n_err:
             logger.warning("Could not fill display name via %s: %s", sel, n_err)
@@ -345,12 +348,14 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
 
     # Waiting-room indicators — if ANY of these are visible, we are waiting for the host to admit us!
     waiting_selectors = [
-        'text="Asking to join"',
-        'text="Someone should let you in shortly"',
-        'text="You\'ll join the call when someone lets you in"',
-        'text="Waiting for the host"',
-        'text="Waiting for host"',
-        'text="Asking to be let in"',
+        "text=/Asking to join/i",
+        "text=/Someone should let you in/i",
+        "text=/let you in shortly/i",
+        "text=/join the call when someone lets you in/i",
+        "text=/Waiting for the host/i",
+        "text=/Waiting for host/i",
+        "text=/Asking to be let in/i",
+        "text=/Wait for the host/i",
     ]
 
     # In-call indicator selectors — ONLY visible when actually inside an active call
@@ -444,7 +449,11 @@ def _wait_for_admission(page: Page, timeout_seconds: float = DEFAULT_ADMISSION_T
 
         now = time.time()
         if now - last_log_time > 15.0:
-            logger.info("Waiting for host admission or call connection (%.0fs elapsed, in_lobby=%s)...", now - start_time, is_still_waiting)
+            try:
+                body_snippet = page.evaluate("() => document.body ? document.body.innerText.replace(/\\s+/g, ' ').trim().slice(0, 150) : ''")
+            except Exception:
+                body_snippet = ""
+            logger.info("Waiting for host admission (%.0fs elapsed, in_lobby=%s, text='%s')...", now - start_time, is_still_waiting, body_snippet)
             last_log_time = now
 
         time.sleep(2 if is_still_waiting else 1.5)
