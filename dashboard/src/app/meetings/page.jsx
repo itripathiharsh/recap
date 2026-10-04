@@ -239,7 +239,7 @@ export default function MeetingsPage() {
     return meetings.find((m) => m.id === selectedMeetingId) || (meetings.length > 0 ? meetings[0] : null);
   }, [meetings, selectedMeetingId]);
 
-  // The one meeting currently mid-pipeline (joining / recording / processing).
+  // The one meeting currently mid-pipeline (joining / queued / recording / processing).
   // Excludes stale/orphaned meetings that failed long ago so banners don't persist indefinitely.
   const liveMeeting = useMemo(() => {
     const now = Date.now();
@@ -247,7 +247,7 @@ export default function MeetingsPage() {
       if (!m) return false;
       const refTime = Date.parse(m.started_at || m.created_at || 0);
       const ageMs = now - refTime;
-      if (m.status === 'joining' && ageMs > 5 * 60 * 1000) return false;
+      if ((m.status === 'joining' || m.status === 'queued') && ageMs > 5 * 60 * 1000) return false;
       if (m.status === 'stopping' && ageMs > 3 * 60 * 1000) return false;
       if (m.status === 'processing' && ageMs > 8 * 60 * 1000) return false;
       if (m.status === 'recording' && ageMs > 90 * 60 * 1000) return false;
@@ -258,7 +258,7 @@ export default function MeetingsPage() {
       meetings.find((m) => m.status === 'processing' && isLive(m)) ||
       meetings.find((m) => m.status === 'stopping' && isLive(m)) ||
       meetings.find((m) => m.status === 'recording' && isLive(m)) ||
-      meetings.find((m) => m.status === 'joining' && isLive(m)) ||
+      meetings.find((m) => (m.status === 'joining' || m.status === 'queued') && isLive(m)) ||
       null
     );
   }, [meetings]);
@@ -319,9 +319,33 @@ export default function MeetingsPage() {
   };
 
   const handleDispatchBot = async (meetingId) => {
+    const nowIso = new Date().toISOString();
+    // 1. Optimistic UI update so the user immediately sees the live counting stopwatch and status change
+    setMeetings((prev) =>
+      prev.map((m) =>
+        m.id === meetingId
+          ? { ...m, status: 'joining', started_at: nowIso, error_message: null }
+          : m
+      )
+    );
+    setDispatchingId(meetingId);
+    setDispatchMessage(null);
+
+    // 2. Persist optimistic status to Supabase so background runner and other tabs see it immediately
     try {
-      setDispatchingId(meetingId);
-      setDispatchMessage(null);
+      await supabase
+        .from('meetings')
+        .update({
+          status: 'joining',
+          started_at: nowIso,
+          error_message: null,
+        })
+        .eq('id', meetingId);
+    } catch (e) {
+      console.warn('Could not update joining status in Supabase:', e);
+    }
+
+    try {
       const res = await fetch(`/api/meetings/${meetingId}/dispatch`, {
         method: 'POST',
       });
@@ -342,6 +366,13 @@ export default function MeetingsPage() {
         text: err.message || 'Failed to dispatch bot runner',
       });
       setTimeout(() => setDispatchMessage(null), 8000);
+      setMeetings((prev) =>
+        prev.map((m) =>
+          m.id === meetingId
+            ? { ...m, status: 'failed', error_message: err.message }
+            : m
+        )
+      );
     } finally {
       setDispatchingId(null);
     }
@@ -849,7 +880,79 @@ export default function MeetingsPage() {
                           </div>
                           <div>
                             <div className="meet-title-text">{m.title}</div>
-                            <div className="meet-snippet-text">{snippet}</div>
+                            {m.status === 'joining' || m.status === 'queued' ? (
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  color: '#B45309',
+                                  backgroundColor: '#FEF3C7',
+                                  padding: '2px 7px',
+                                  borderRadius: '4px',
+                                  marginTop: '2px',
+                                }}
+                              >
+                                <span className="pp-rec-pulse" style={{ width: '6px', height: '6px', backgroundColor: '#F59E0B' }} />
+                                Joining... ({formatElapsed(m.started_at || m.created_at)})
+                              </span>
+                            ) : m.status === 'recording' ? (
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  color: '#B91C1C',
+                                  backgroundColor: '#FEE2E2',
+                                  padding: '2px 7px',
+                                  borderRadius: '4px',
+                                  marginTop: '2px',
+                                }}
+                              >
+                                <span className="pp-rec-pulse" style={{ width: '6px', height: '6px', backgroundColor: '#EF4444' }} />
+                                Live ({formatElapsed(m.started_at || m.created_at)})
+                              </span>
+                            ) : m.status === 'stopping' || m.status === 'processing' ? (
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  color: '#6D28D9',
+                                  backgroundColor: '#EDE9FE',
+                                  padding: '2px 7px',
+                                  borderRadius: '4px',
+                                  marginTop: '2px',
+                                }}
+                              >
+                                Processing...
+                              </span>
+                            ) : m.status === 'failed' ? (
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  color: '#DC2626',
+                                  backgroundColor: '#FEF2F2',
+                                  padding: '2px 7px',
+                                  borderRadius: '4px',
+                                  marginTop: '2px',
+                                }}
+                              >
+                                Failed to join
+                              </span>
+                            ) : (
+                              <div className="meet-snippet-text">{snippet}</div>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -960,7 +1063,7 @@ export default function MeetingsPage() {
                 </div>
 
                 <div className="detail-header-actions">
-                  {currentMeeting.status === 'joining' ? (
+                  {currentMeeting.status === 'joining' || currentMeeting.status === 'queued' ? (
                     <div
                       style={{
                         display: 'inline-flex',
@@ -1107,7 +1210,7 @@ export default function MeetingsPage() {
                 </div>
               </div>
 
-              {currentMeeting.status === 'joining' && (
+              {(currentMeeting.status === 'joining' || currentMeeting.status === 'queued') && (
                 <div
                   style={{
                     padding: '10px 14px',
@@ -1150,19 +1253,47 @@ export default function MeetingsPage() {
               {currentMeeting.status === 'failed' && (
                 <div
                   style={{
-                    padding: '10px 14px',
-                    margin: '8px 0 12px 0',
-                    borderRadius: '6px',
+                    padding: '12px 16px',
+                    margin: '8px 0 14px 0',
+                    borderRadius: '8px',
                     fontSize: '12.5px',
-                    lineHeight: '1.4',
+                    lineHeight: '1.45',
                     backgroundColor: '#FEF2F2',
                     color: '#991B1B',
                     border: '1px solid #FECACA',
                   }}
                 >
-                  <strong>Bot could not join call:</strong> {currentMeeting.error_message || 'Timed out waiting for host admission.'}
-                  <div style={{ marginTop: '4px', fontSize: '12px', color: '#7F1D1D' }}>
-                    Ensure the meeting is active, and if Google Meet Host Management is ON, turn it OFF in Host Controls (blue shield icon). Click &quot;Retry Join Call&quot; above to try again.
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <strong style={{ fontSize: '13px', color: '#991B1B' }}>
+                      ⚠️ Bot could not join call:
+                    </strong>
+                    <button
+                      type="button"
+                      onClick={() => handleDispatchBot(currentMeeting.id)}
+                      disabled={dispatchingId === currentMeeting.id}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        padding: '4px 10px',
+                        fontSize: '11.5px',
+                        fontWeight: 600,
+                        borderRadius: '5px',
+                        backgroundColor: '#DC2626',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <Play size={10} fill="#FFFFFF" />
+                      <span>{dispatchingId === currentMeeting.id ? 'Dispatching...' : 'Retry Join'}</span>
+                    </button>
+                  </div>
+                  <div style={{ color: '#7F1D1D', marginBottom: '6px' }}>
+                    {currentMeeting.error_message || 'Timed out waiting for host admission or guest entry blocked.'}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#991B1B', backgroundColor: '#FEE2E2', padding: '8px 10px', borderRadius: '6px' }}>
+                    💡 <strong>How to fix:</strong> If Google Meet shows &quot;You can&apos;t join this video call&quot;, click the <strong>Host Controls shield icon</strong> (🛡️ at bottom right of Google Meet) and toggle <strong>&quot;Host management&quot; to OFF</strong>. This allows the guest bot to knock and be admitted into your call.
                   </div>
                 </div>
               )}

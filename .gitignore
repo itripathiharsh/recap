@@ -32,6 +32,7 @@ data/recordings/
 data/jobs/
 data/chrome_profile/
 data/google_auth.json
+data/debug/
 logs/
 !data/recordings/.gitkeep
 !data/jobs/.gitkeep
